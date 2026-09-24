@@ -11,6 +11,7 @@ import {
   CheckCircle,
   WarningCircle,
   ArrowClockwise,
+  Heart,
   X,
   ArrowsLeftRight,
   Check,
@@ -148,6 +149,9 @@ function BlockScreen({ resetIn }) {
         </div>
         <p className="text-sm mt-4 max-w-sm themed-modal-muted">
           You have sent too many messages. Please wait 30 minutes before sending more.
+        </p>
+<p className="text-sm mt-2 themed-modal-muted">
+          Or switch to <a href="https://muxai.vercel.app/" target="_blank" rel="noreferrer" className="underline font-bold text-red-500 hover:opacity-80">MuxAI</a> for unlimited messages (it's free).
         </p>
       </motion.div>
     </AnimatePresence>
@@ -721,9 +725,7 @@ export default function App() {
           </div>
 
           {wifeMode && (
-            <span className="themed-wife-badge text-xs font-bold px-2.5 sm:px-3 py-1 rounded-full border">
-              Wife Mode
-            </span>
+            <Heart size={22} weight="fill" className="text-rose-500 shrink-0" title="Wife Mode Active" />
           )}
 
           <div className="ml-auto flex items-center gap-2 sm:gap-3">
