@@ -1,46 +1,70 @@
 // src/lib/api.js
 import { getServerConfig } from './storage';
 
-function getRequestHeaders() {
-  const headers = { 'Content-Type': 'application/json' };
+export function getCustomServerUrl() {
   const cfg = getServerConfig();
   if (cfg.mode === 'custom' && cfg.customUrl) {
-    headers['x-custom-server'] = cfg.customUrl;
+    let url = cfg.customUrl.trim().replace(/\/+$/, '');
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      url = 'https://' + url;
+    }
+    return url;
+  }
+  return '';
+}
+
+function getRequestHeaders(customOverride = null) {
+  const headers = { 'Content-Type': 'application/json' };
+  const customUrl = customOverride !== null ? customOverride : getCustomServerUrl();
+  if (customUrl) {
+    headers['x-custom-server'] = customUrl;
   }
   return headers;
 }
 
 export async function pingServer(overrideUrl = null) {
-  const headers = { 'Content-Type': 'application/json' };
+  let targetCustomUrl = '';
+  let mode = 'default';
+
   if (typeof overrideUrl === 'string') {
-    if (overrideUrl.trim()) {
-      headers['x-custom-server'] = overrideUrl.trim();
+    let u = overrideUrl.trim().replace(/\/+$/, '');
+    if (u) {
+      if (!u.startsWith('http://') && !u.startsWith('https://')) {
+        u = 'https://' + u;
+      }
+      targetCustomUrl = u;
+      mode = 'custom';
     }
   } else {
     const cfg = getServerConfig();
-    if (cfg.mode === 'custom' && cfg.customUrl) {
-      headers['x-custom-server'] = cfg.customUrl;
-    }
+    mode = cfg.mode;
+    targetCustomUrl = getCustomServerUrl();
   }
+
+  const headers = getRequestHeaders(targetCustomUrl);
 
   try {
     const res = await fetch('/api/ping', {
       method: 'POST',
       headers,
+      body: JSON.stringify({
+        customServerUrl: targetCustomUrl,
+        mode,
+      }),
     });
     const data = await res.json().catch(() => ({}));
     return {
       online: res.ok && data.status === 'online',
-      mode: data.mode || (overrideUrl ? 'custom' : 'default'),
-      targetUrl: data.targetUrl || '',
+      mode: data.mode || mode,
+      targetUrl: data.targetUrl || targetCustomUrl,
       error: data.error || null,
       statusCode: res.status,
     };
   } catch (err) {
     return {
       online: false,
-      mode: overrideUrl ? 'custom' : 'default',
-      targetUrl: overrideUrl || '',
+      mode,
+      targetUrl: targetCustomUrl,
       error: err.message,
     };
   }
@@ -53,6 +77,8 @@ export async function fetchAIReply(
   options = {}
 ) {
   const { jsonMode = false, tools = null, temperature = 0.6 } = options;
+  const customServerUrl = getCustomServerUrl();
+  const cfg = getServerConfig();
 
   const res = await fetch('/api/chat', {
     method: 'POST',
@@ -63,7 +89,9 @@ export async function fetchAIReply(
       version, 
       jsonMode, 
       tools, 
-      temperature 
+      temperature,
+      customServerUrl,
+      serverMode: cfg.mode,
     }),
   });
 
@@ -87,10 +115,17 @@ export async function verifyWifePassword(password) {
 }
 
 export async function generateTitle(messages, version = 'v1.6') {
+  const customServerUrl = getCustomServerUrl();
+  const cfg = getServerConfig();
   const res = await fetch('/api/generate-title', {
     method: 'POST',
     headers: getRequestHeaders(),
-    body: JSON.stringify({ messages, version }),
+    body: JSON.stringify({ 
+      messages, 
+      version,
+      customServerUrl,
+      serverMode: cfg.mode,
+    }),
   });
   if (!res.ok) return null;
   const data = await res.json().catch(() => ({}));
@@ -98,10 +133,18 @@ export async function generateTitle(messages, version = 'v1.6') {
 }
 
 export async function analyzeImageWithVision(prompt, images, model) {
+  const customServerUrl = getCustomServerUrl();
+  const cfg = getServerConfig();
   const res = await fetch('/api/vision', {
     method: 'POST',
     headers: getRequestHeaders(),
-    body: JSON.stringify({ prompt, images, model }),
+    body: JSON.stringify({ 
+      prompt, 
+      images, 
+      model,
+      customServerUrl,
+      serverMode: cfg.mode,
+    }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));

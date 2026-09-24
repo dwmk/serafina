@@ -4,15 +4,32 @@
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
 const OLLAMA_VISION_MODEL = process.env.OLLAMA_VISION_MODEL || 'llama3.2-vision:11b';
 
+function getTargetBaseUrl(req) {
+  const customServer =
+    req.headers['x-custom-server'] ||
+    (req.body && (req.body.customServerUrl || req.body.customUrl)) ||
+    (req.query && (req.query.customServerUrl || req.query.customUrl));
+
+  if (customServer && typeof customServer === 'string' && customServer.trim()) {
+    let url = customServer.trim().replace(/\/+$/, '');
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      url = 'https://' + url;
+    }
+    return url;
+  }
+  return OLLAMA_BASE_URL.replace(/\/+$/, '');
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-custom-server');
 
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   try {
+    const targetUrl = getTargetBaseUrl(req);
     const { prompt } = req.body || {};
     if (!prompt) return res.status(400).json({ error: 'Prompt is required' });
 
@@ -20,7 +37,7 @@ export default async function handler(req, res) {
     // text-based "image" result. The main LLM embeds this in its response.
     // Since llama3.2-vision:11b can describe but not generate images, we produce
     // a rich visual description the LLM can present to the user.
-    const endpoint = `${OLLAMA_BASE_URL.replace(/\/$/, '')}/api/chat`;
+    const endpoint = `${targetUrl}/api/chat`;
     const upstream = await fetch(endpoint, {
       method: 'POST',
       headers: {

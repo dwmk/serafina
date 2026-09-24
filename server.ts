@@ -21,9 +21,17 @@ function checkWifePassword(input: string): boolean {
 }
 
 function getTargetBaseUrl(req: express.Request): string {
-  const customServer = (req.headers['x-custom-server'] as string) || (req.body && req.body.customServerUrl) || (req.query && req.query.customServerUrl as string);
+  const customServer =
+    (req.headers['x-custom-server'] as string) ||
+    (req.body && (req.body.customServerUrl || req.body.customUrl)) ||
+    (req.query && (req.query.customServerUrl as string || req.query.customUrl as string));
+
   if (customServer && typeof customServer === 'string' && customServer.trim()) {
-    return customServer.trim().replace(/\/+$/, '');
+    let url = customServer.trim().replace(/\/+$/, '');
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      url = 'https://' + url;
+    }
+    return url;
   }
   return DEFAULT_OLLAMA_URL.replace(/\/+$/, '');
 }

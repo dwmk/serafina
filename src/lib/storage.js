@@ -107,9 +107,14 @@ export function getServerConfig() {
     const raw = localStorage.getItem(SERVER_KEY) || localStorage.getItem(LEGACY_SERVER_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
+      let url = typeof parsed.customUrl === 'string' ? parsed.customUrl.trim() : '';
+      if (url && !url.startsWith('http://') && !url.startsWith('https://')) {
+        url = 'https://' + url;
+      }
+      url = url.replace(/\/+$/, '');
       return {
         mode: parsed.mode === 'custom' ? 'custom' : 'default',
-        customUrl: typeof parsed.customUrl === 'string' ? parsed.customUrl.trim() : '',
+        customUrl: url,
       };
     }
   } catch {
@@ -119,11 +124,20 @@ export function getServerConfig() {
 }
 
 export function saveServerConfig(cfg) {
+  let url = (cfg.customUrl || '').trim();
+  if (url && !url.startsWith('http://') && !url.startsWith('https://')) {
+    url = 'https://' + url;
+  }
+  url = url.replace(/\/+$/, '');
+
   const config = {
     mode: cfg.mode === 'custom' ? 'custom' : 'default',
-    customUrl: (cfg.customUrl || '').trim(),
+    customUrl: url,
   };
   localStorage.setItem(SERVER_KEY, JSON.stringify(config));
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('server-config-changed', { detail: config }));
+  }
   return config;
 }
 

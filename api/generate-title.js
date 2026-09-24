@@ -2,6 +2,22 @@
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.1:8b';
 
+function getTargetBaseUrl(req) {
+  const customServer =
+    req.headers['x-custom-server'] ||
+    (req.body && (req.body.customServerUrl || req.body.customUrl)) ||
+    (req.query && (req.query.customServerUrl || req.query.customUrl));
+
+  if (customServer && typeof customServer === 'string' && customServer.trim()) {
+    let url = customServer.trim().replace(/\/+$/, '');
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      url = 'https://' + url;
+    }
+    return url;
+  }
+  return OLLAMA_BASE_URL.replace(/\/+$/, '');
+}
+
 function getPromptForVersion(version) {
   if (version === 'v1.4') {
     return process.env.PROMPT_V14;
@@ -12,12 +28,13 @@ function getPromptForVersion(version) {
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-custom-server');
 
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   try {
+    const targetUrl = getTargetBaseUrl(req);
     const { messages, version } = req.body || {};
     const history = Array.isArray(messages) ? messages : [];
     const ver = version === 'v1.4' ? 'v1.4' : 'v1.6';
@@ -40,7 +57,7 @@ export default async function handler(req, res) {
       ],
     };
 
-    const endpoint = `${OLLAMA_BASE_URL.replace(/\/$/, '')}/v1/chat/completions`;
+    const endpoint = `${targetUrl}/v1/chat/completions`;
     const upstream = await fetch(endpoint, {
       method: 'POST',
       headers: { 

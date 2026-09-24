@@ -2,6 +2,22 @@
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.1:8b';
 
+function getTargetBaseUrl(req) {
+  const customServer =
+    req.headers['x-custom-server'] ||
+    (req.body && (req.body.customServerUrl || req.body.customUrl)) ||
+    (req.query && (req.query.customServerUrl || req.query.customUrl));
+
+  if (customServer && typeof customServer === 'string' && customServer.trim()) {
+    let url = customServer.trim().replace(/\/+$/, '');
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      url = 'https://' + url;
+    }
+    return url;
+  }
+  return OLLAMA_BASE_URL.replace(/\/+$/, '');
+}
+
 const TOOL_ALIASES = {
   brave_search: 'web_search',
   search: 'web_search',
@@ -64,12 +80,13 @@ function getPrompts(version) {
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-custom-server');
 
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   try {
+    const targetUrl = getTargetBaseUrl(req);
     const { 
       messages, 
       wifeMode, 
@@ -117,8 +134,8 @@ export default async function handler(req, res) {
       payload.tool_choice = 'auto';
     }
 
-    // Ping Ollama's OpenAI-compatible endpoint through the ngrok tunnel
-    const endpoint = `${OLLAMA_BASE_URL.replace(/\/$/, '')}/v1/chat/completions`;
+    // Ping Ollama's OpenAI-compatible endpoint through the ngrok tunnel or default server
+    const endpoint = `${targetUrl}/v1/chat/completions`;
     const upstream = await fetch(endpoint, {
       method: 'POST',
       headers: { 
