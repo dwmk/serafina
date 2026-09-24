@@ -107,14 +107,16 @@ function TalkingAvatar({ size = 56, isLatest = false, isStreaming = false }) {
       <img
         src="/seraphina1.png"
         alt="Serafina"
-        className={`absolute inset-0 w-full h-full object-cover object-top transition-opacity duration-75 ${
-          variant === 1 ? 'opacity-100' : 'opacity-0 pointer-events-none'
-        }`}
+        loading="eager"
+        decoding="sync"
+        className="absolute inset-0 w-full h-full object-cover object-top"
       />
       <img
         src="/seraphina2.png"
         alt="Serafina"
-        className={`absolute inset-0 w-full h-full object-cover object-top transition-opacity duration-75 ${
+        loading="eager"
+        decoding="sync"
+        className={`absolute inset-0 w-full h-full object-cover object-top ${
           variant === 2 ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
       />
@@ -174,6 +176,7 @@ export default function App() {
     temperature: 0.6,
   });
   const [toolProgress, setToolProgress] = useState(null);
+  const [copiedId, setCopiedId] = useState(null);
 
   // Server modal state
   const [serverModalOpen, setServerModalOpen] = useState(false);
@@ -322,6 +325,140 @@ export default function App() {
     }
   };
 
+  const handleCopy = (id, text) => {
+    if (!text) return;
+    navigator.clipboard.writeText(text);
+    setCopiedId(id);
+    setTimeout(() => {
+      setCopiedId((prev) => (prev === id ? null : prev));
+    }, 1800);
+  };
+
+  const runAssistantLoop = async (convId, baseMsgs, conversationHistory) => {
+    setLoading(true);
+    setError('');
+    setToolProgress({ phase: 'thinking' });
+
+    const tools = modelOptions.toolCalling ? TOOL_DEFINITIONS : null;
+    const browserInfo = getBrowserInfo();
+    const MAX_TOOL_ROUNDS = 5;
+    let gotFinalReply = false;
+
+    try {
+      for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+        const data = await fetchAIReply(conversationHistory, wifeMode, version, {
+          jsonMode: modelOptions.jsonMode,
+          temperature: modelOptions.temperature,
+          tools: round === 0 ? tools : null,
+        });
+
+        if (!data.toolCalls || !Array.isArray(data.toolCalls) || data.toolCalls.length === 0) {
+          const replyText = data.reply || '';
+          const aiMsg = {
+            id: `msg_a_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            role: 'assistant',
+            content: replyText,
+          };
+          const finalMsgs = [...baseMsgs, aiMsg];
+          setMessages(finalMsgs);
+          persistMessages(convId, finalMsgs);
+          const info = recordMessage();
+          setRateInfo(info);
+          maybeGenerateTitle(convId, finalMsgs);
+          gotFinalReply = true;
+          break;
+        }
+
+        if (data.reply) {
+          conversationHistory.push({ role: 'assistant', content: data.reply });
+        }
+
+        const toolProgressList = data.toolCalls.map((tc) => ({
+          name: tc.function?.name || 'unknown',
+          status: 'pending',
+        }));
+        setToolProgress({ phase: 'calling_tools', tools: toolProgressList });
+
+        const toolResultParts = [];
+
+        for (let i = 0; i < data.toolCalls.length; i++) {
+          const tc = data.toolCalls[i];
+          const toolName = tc.function?.name || 'unknown';
+          let parsedArgs = {};
+          try { parsedArgs = JSON.parse(tc.function?.arguments || '{}'); } catch {}
+
+          toolProgressList[i].status = 'executing';
+          setToolProgress({ phase: 'calling_tools', tools: [...toolProgressList] });
+
+          const result = await executeTool(toolName, parsedArgs, browserInfo);
+
+          toolProgressList[i].status = 'done';
+          setToolProgress({ phase: 'calling_tools', tools: [...toolProgressList] });
+
+          toolResultParts.push(`[Tool: ${toolName}]\nArguments: ${JSON.stringify(parsedArgs)}\nResult: ${result}`);
+        }
+
+        setToolProgress({ phase: 'processing_results' });
+
+        conversationHistory.push({
+          role: 'user',
+          content: `Here are the real-time tool results. Use this data to answer the user's question. Do NOT call any more tools — just respond naturally using this data.\n\n${toolResultParts.join('\n\n')}`,
+        });
+      }
+
+      if (!gotFinalReply) {
+        setToolProgress({ phase: 'thinking_after_tools' });
+        const finalData = await fetchAIReply(conversationHistory, wifeMode, version, {
+          jsonMode: modelOptions.jsonMode,
+          temperature: modelOptions.temperature,
+          tools: null,
+        });
+        const replyText = finalData.reply || 'I was unable to process the tool results.';
+        const aiMsg = {
+          id: `msg_a_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          role: 'assistant',
+          content: replyText,
+        };
+        const finalMsgs = [...baseMsgs, aiMsg];
+        setMessages(finalMsgs);
+        persistMessages(convId, finalMsgs);
+        const info = recordMessage();
+        setRateInfo(info);
+        maybeGenerateTitle(convId, finalMsgs);
+      }
+    } catch {
+      setError(GENERIC_ERROR);
+    } finally {
+      setLoading(false);
+      setToolProgress(null);
+    }
+  };
+
+  const handleRetry = async (targetIndex) => {
+    if (loading) return;
+    const convId = activeId;
+    if (!convId) return;
+    const targetMsg = messages[targetIndex];
+    if (!targetMsg || targetMsg.role !== 'user') return;
+
+    const newMsgs = messages.slice(0, targetIndex + 1);
+    setMessages(newMsgs);
+    persistMessages(convId, newMsgs);
+
+    let fullContextContent = targetMsg.content || '';
+    const attachments = targetMsg.attachments || [];
+    const docAttachments = attachments.filter((a) => a.type !== 'image');
+    if (docAttachments.length > 0) {
+      const docParts = docAttachments.map((a) => formatFileForContext(a));
+      fullContextContent = `${fullContextContent}\n\n--- ATTACHED FILES ---\n${docParts.join('\n\n')}`.trim();
+    }
+
+    const historyBefore = messages.slice(0, targetIndex).map((m) => ({ role: m.role, content: m.content }));
+    const conversationHistory = [...historyBefore, { role: 'user', content: fullContextContent }];
+
+    await runAssistantLoop(convId, newMsgs, conversationHistory);
+  };
+
   const handleSend = async (text, attachments = []) => {
     let convId = activeId;
     let currentConvs = conversations;
@@ -382,104 +519,10 @@ export default function App() {
     setMessages(newMsgs);
     persistMessages(convId, newMsgs);
 
-    setLoading(true);
-    setError('');
-    setToolProgress({ phase: 'thinking' });
+    const historyBefore = messages.map((m) => ({ role: m.role, content: m.content }));
+    const conversationHistory = [...historyBefore, { role: 'user', content: fullContextContent }];
 
-    const tools = modelOptions.toolCalling ? TOOL_DEFINITIONS : null;
-    const browserInfo = getBrowserInfo();
-    const MAX_TOOL_ROUNDS = 5;
-    let conversationHistory = [...messages, { role: 'user', content: fullContextContent }];
-    let gotFinalReply = false;
-
-    try {
-      for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
-        const data = await fetchAIReply(conversationHistory, wifeMode, version, {
-          jsonMode: modelOptions.jsonMode,
-          temperature: modelOptions.temperature,
-          tools: round === 0 ? tools : null,
-        });
-
-        if (!data.toolCalls || !Array.isArray(data.toolCalls) || data.toolCalls.length === 0) {
-          const replyText = data.reply || '';
-          const aiMsg = {
-            id: `msg_a_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-            role: 'assistant',
-            content: replyText,
-          };
-          const finalMsgs = [...newMsgs, aiMsg];
-          setMessages(finalMsgs);
-          persistMessages(convId, finalMsgs);
-          const info = recordMessage();
-          setRateInfo(info);
-          maybeGenerateTitle(convId, finalMsgs);
-          gotFinalReply = true;
-          break;
-        }
-
-        if (data.reply) {
-          conversationHistory.push({ role: 'assistant', content: data.reply });
-        }
-
-        const toolProgressList = data.toolCalls.map((tc) => ({
-          name: tc.function?.name || 'unknown',
-          status: 'pending',
-        }));
-        setToolProgress({ phase: 'calling_tools', tools: toolProgressList });
-
-        const toolResultParts = [];
-
-        for (let i = 0; i < data.toolCalls.length; i++) {
-          const tc = data.toolCalls[i];
-          const toolName = tc.function?.name || 'unknown';
-          let parsedArgs = {};
-          try { parsedArgs = JSON.parse(tc.function?.arguments || '{}'); } catch {}
-
-          toolProgressList[i].status = 'executing';
-          setToolProgress({ phase: 'calling_tools', tools: [...toolProgressList] });
-
-          const result = await executeTool(toolName, parsedArgs, browserInfo);
-
-          toolProgressList[i].status = 'done';
-          setToolProgress({ phase: 'calling_tools', tools: [...toolProgressList] });
-
-          toolResultParts.push(`[Tool: ${toolName}]\nArguments: ${JSON.stringify(parsedArgs)}\nResult: ${result}`);
-        }
-
-        setToolProgress({ phase: 'processing_results' });
-
-        conversationHistory.push({
-          role: 'user',
-          content: `Here are the real-time tool results. Use this data to answer the user's question. Do NOT call any more tools — just respond naturally using this data.\n\n${toolResultParts.join('\n\n')}`,
-        });
-      }
-
-      if (!gotFinalReply) {
-        setToolProgress({ phase: 'thinking_after_tools' });
-        const finalData = await fetchAIReply(conversationHistory, wifeMode, version, {
-          jsonMode: modelOptions.jsonMode,
-          temperature: modelOptions.temperature,
-          tools: null,
-        });
-        const replyText = finalData.reply || 'I was unable to process the tool results.';
-        const aiMsg = {
-          id: `msg_a_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-          role: 'assistant',
-          content: replyText,
-        };
-        const finalMsgs = [...newMsgs, aiMsg];
-        setMessages(finalMsgs);
-        persistMessages(convId, finalMsgs);
-        const info = recordMessage();
-        setRateInfo(info);
-        maybeGenerateTitle(convId, finalMsgs);
-      }
-    } catch {
-      setError(GENERIC_ERROR);
-    } finally {
-      setLoading(false);
-      setToolProgress(null);
-    }
+    await runAssistantLoop(convId, newMsgs, conversationHistory);
   };
 
   const handleToggleWifeMode = () => {
@@ -730,7 +773,7 @@ export default function App() {
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.18, ease: 'easeOut' }}
-                  className={`flex gap-2 sm:gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                  className={`group/msg flex gap-2 sm:gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
                 >
                   {msg.role === 'assistant' && (
                     <TalkingAvatar
@@ -739,62 +782,124 @@ export default function App() {
                       isStreaming={loading && i === messages.length - 1}
                     />
                   )}
-                  <div
-                    className={`group/msg max-w-[85%] sm:max-w-[80%] px-4 sm:px-5 py-3 rounded-2xl text-sm sm:text-base leading-relaxed transition-all duration-200 cursor-default ${
-                      msg.role === 'user'
-                        ? 'themed-user-bubble rounded-tr-sm hover:shadow-lg hover:-translate-y-0.5'
-                        : 'themed-ai-bubble rounded-tl-sm backdrop-blur-sm hover:shadow-lg hover:-translate-y-0.5'
-                    }`}
-                  >
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm, remarkMath]}
-                      rehypePlugins={[rehypeKatex]}
-                      className="break-words space-y-2 text-sm sm:text-base"
-                      components={{
-                        p: ({ node, ...props }) => <p className="whitespace-pre-wrap leading-relaxed inline-block w-full" {...props} />,
-                        code: ({ node, inline, className, children, ...props }) => {
-                          return !inline ? (
-                            <div className="themed-code-block p-3 rounded-md overflow-x-auto my-2 text-xs sm:text-sm font-mono border shadow-sm">
-                              <code className={className} {...props}>{children}</code>
-                            </div>
-                          ) : (
-                            <code className="themed-code-inline rounded px-1.5 py-0.5 text-[0.875em] font-mono" {...props}>{children}</code>
-                          );
-                        },
-                        blockquote: ({ node, ...props }) => (
-                          <blockquote className="themed-quote border-l-4 pl-3 my-1 italic" {...props} />
-                        ),
-                        ul: ({ node, ...props }) => <ul className="list-disc list-outside ml-5 space-y-1" {...props} />,
-                        ol: ({ node, ...props }) => <ol className="list-decimal list-outside ml-5 space-y-1" {...props} />,
-                        li: ({ node, ...props }) => <li className="pl-0.5" {...props} />,
-                        strong: ({ node, ...props }) => <strong className="font-bold" {...props} />,
-                        a: ({ node, ...props }) => <a className="themed-link hover:underline" target="_blank" rel="noreferrer" {...props} />
-                      }}
+                  <div className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'} max-w-[85%] sm:max-w-[80%]`}>
+                    <div
+                      className={`w-full px-4 sm:px-5 py-3 rounded-2xl text-sm sm:text-base leading-relaxed transition-all duration-200 cursor-default ${
+                        msg.role === 'user'
+                          ? 'themed-user-bubble rounded-tr-sm hover:shadow-lg hover:-translate-y-0.5'
+                          : 'themed-ai-bubble rounded-tl-sm backdrop-blur-sm hover:shadow-lg hover:-translate-y-0.5'
+                      }`}
                     >
-                      {msg.content}
-                    </ReactMarkdown>
-                    {msg.attachments && msg.attachments.length > 0 && (
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {msg.attachments.map((file, idx) => (
-                          file.type === 'image' ? (
-                            <img 
-                              key={idx} 
-                              src={file.dataUrl} 
-                              alt={file.name} 
-                              className="max-w-full h-auto rounded-xl border border-zinc-500/20 max-h-48 object-cover shadow-sm" 
-                            />
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm, remarkMath]}
+                        rehypePlugins={[rehypeKatex]}
+                        className="break-words space-y-2 text-sm sm:text-base"
+                        components={{
+                          p: ({ node, ...props }) => <p className="whitespace-pre-wrap leading-relaxed inline-block w-full" {...props} />,
+                          code: ({ node, inline, className, children, ...props }) => {
+                            return !inline ? (
+                              <div className="themed-code-block p-3 rounded-md overflow-x-auto my-2 text-xs sm:text-sm font-mono border shadow-sm">
+                                <code className={className} {...props}>{children}</code>
+                              </div>
+                            ) : (
+                              <code className="themed-code-inline rounded px-1.5 py-0.5 text-[0.875em] font-mono" {...props}>{children}</code>
+                            );
+                          },
+                          blockquote: ({ node, ...props }) => (
+                            <blockquote className="themed-quote border-l-4 pl-3 my-1 italic" {...props} />
+                          ),
+                          ul: ({ node, ...props }) => <ul className="list-disc list-outside ml-5 space-y-1" {...props} />,
+                          ol: ({ node, ...props }) => <ol className="list-decimal list-outside ml-5 space-y-1" {...props} />,
+                          li: ({ node, ...props }) => <li className="pl-0.5" {...props} />,
+                          strong: ({ node, ...props }) => <strong className="font-bold" {...props} />,
+                          a: ({ node, ...props }) => <a className="themed-link hover:underline" target="_blank" rel="noreferrer" {...props} />
+                        }}
+                      >
+                        {msg.content}
+                      </ReactMarkdown>
+                      {msg.attachments && msg.attachments.length > 0 && (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {msg.attachments.map((file, idx) => (
+                            file.type === 'image' ? (
+                              <img 
+                                key={idx} 
+                                src={file.dataUrl} 
+                                alt={file.name} 
+                                className="max-w-full h-auto rounded-xl border border-zinc-500/20 max-h-48 object-cover shadow-sm" 
+                              />
+                            ) : (
+                              <div 
+                                key={idx} 
+                                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-black/5 border border-zinc-500/20 text-xs font-medium"
+                              >
+                                <span className="text-xl">📄</span> 
+                                <span className="truncate max-w-[150px]">{file.name}</span>
+                              </div>
+                            )
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div
+                      className={`flex items-center gap-1.5 pt-1.5 px-1 opacity-0 group-hover/msg:opacity-100 focus-within:opacity-100 transition-opacity duration-150 select-none ${
+                        msg.role === 'user' ? 'justify-end' : 'justify-start'
+                      }`}
+                    >
+                      {msg.role === 'user' ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => handleCopy(msg.id, msg.content)}
+                            className="themed-btn flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium transition-all hover:scale-105 active:scale-95 shadow-xs cursor-pointer"
+                            title={copiedId === msg.id ? 'Copied to clipboard' : 'Copy text'}
+                          >
+                            {copiedId === msg.id ? (
+                              <>
+                                <Check size={12} className="text-emerald-500" />
+                                <span className="text-[11px] text-emerald-500">Copied</span>
+                              </>
+                            ) : (
+                              <>
+                                <Copy size={12} />
+                                <span className="text-[11px]">Copy</span>
+                              </>
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRetry(i)}
+                            disabled={loading}
+                            className={`themed-btn flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium transition-all hover:scale-105 active:scale-95 shadow-xs cursor-pointer ${
+                              loading ? 'opacity-40 cursor-not-allowed' : ''
+                            }`}
+                            title="Retry this message"
+                          >
+                            <ArrowClockwise size={12} className={loading ? 'animate-spin' : ''} />
+                            <span className="text-[11px]">Retry</span>
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleCopy(msg.id, msg.content)}
+                          className="themed-btn flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium transition-all hover:scale-105 active:scale-95 shadow-xs cursor-pointer"
+                          title={copiedId === msg.id ? 'Copied to clipboard' : 'Copy text'}
+                        >
+                          {copiedId === msg.id ? (
+                            <>
+                              <Check size={12} className="text-emerald-500" />
+                              <span className="text-[11px] text-emerald-500">Copied</span>
+                            </>
                           ) : (
-                            <div 
-                              key={idx} 
-                              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-black/5 border border-zinc-500/20 text-xs font-medium"
-                            >
-                              <span className="text-xl">📄</span> 
-                              <span className="truncate max-w-[150px]">{file.name}</span>
-                            </div>
-                          )
-                        ))}
-                      </div>
-                    )}
+                            <>
+                              <Copy size={12} />
+                              <span className="text-[11px]">Copy</span>
+                            </>
+                          )}
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </motion.div>
               ))}
