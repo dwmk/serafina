@@ -270,7 +270,7 @@ export function ChatInput({
           )}
         </AnimatePresence>
 
-        <div className={`flex items-end gap-2 backdrop-blur-xl border rounded-3xl shadow-lg transition-colors pl-3 sm:pl-4 pr-2 py-2 themed-input`}>
+        <div className={`flex items-end gap-2 backdrop-blur-xl border rounded-3xl shadow-lg transition-colors pl-3 sm:pl-4 pr-2 py-2 themed-input relative z-10`}>
           
           {/* "+" Icon Button inside chat input on left side */}
           <button

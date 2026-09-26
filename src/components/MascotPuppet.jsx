@@ -118,16 +118,20 @@ export function MascotPuppet({ isOnline = true, onOpenServerModal }) {
           }, 3800);
         }, 2800);
       } else {
-        // Server was online at moment of page visit / reload
+        // Server was online at moment of page visit / reload:
+        // Wait 2 seconds at greeting message before proceeding to "Ah, the server is online now!"
         setCurrentMessage(getTimeGreeting());
         t1 = setTimeout(() => {
-          setCurrentMessage('Talk to me by typing messages here');
-          // Wait a few seconds after the last message is sent, then exit
-          tExit = setTimeout(() => {
-            playExitSound();
-            setDismissed(true);
-          }, 3800);
-        }, 2500);
+          setCurrentMessage('Ah, the server is online now!');
+          t2 = setTimeout(() => {
+            setCurrentMessage('Talk to me by typing messages here');
+            // Wait a few seconds after the last message is sent, then exit
+            tExit = setTimeout(() => {
+              playExitSound();
+              setDismissed(true);
+            }, 3800);
+          }, 2800);
+        }, 2000);
       }
     }
 
@@ -181,7 +185,7 @@ export function MascotPuppet({ isOnline = true, onOpenServerModal }) {
               duration: 0.35,
             },
           }}
-          className="absolute bottom-full left-0 mb-1.5 z-30 flex items-end gap-2.5 pointer-events-auto select-none"
+          className="absolute left-0 bottom-[calc(100%-10px)] sm:bottom-[calc(100%-10px)] z-0 flex items-end gap-2.5 pointer-events-auto select-none"
         >
           {/* Layered Live2D-like Puppet Mascot with Bouncy Click Animation */}
           <motion.div
@@ -200,7 +204,7 @@ export function MascotPuppet({ isOnline = true, onOpenServerModal }) {
             whileTap={{ scale: 0.86 }}
             onClick={handlePuppetClick}
             title="Serafina"
-            className="group relative w-16 h-16 sm:w-20 sm:h-20 shrink-0 cursor-pointer filter drop-shadow-md"
+            className="group relative w-16 h-16 sm:w-20 sm:h-20 shrink-0 cursor-pointer filter drop-shadow-md z-0"
           >
             {/* Layer 5 (furthest / back): Back Hair */}
             <img
@@ -254,7 +258,7 @@ export function MascotPuppet({ isOnline = true, onOpenServerModal }) {
           </motion.div>
 
           {/* Thought Bubble to the right side of the face */}
-          <div className="relative mb-3 sm:mb-4 flex items-center">
+          <div className="relative mb-7 sm:mb-9 flex items-center z-20">
             {/* Trailing thought bubble dots */}
             <div className="absolute -left-2.5 bottom-1.5 flex flex-col items-center gap-1 pointer-events-none">
               <span className="w-2 h-2 rounded-full themed-ai-bubble border shadow-xs" />

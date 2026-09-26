@@ -137,32 +137,48 @@ export function playMessageSound() {
 }
 
 /**
- * Bouncy cartoon rubber "boing" when tapped or clicked
+ * Feminine, sweet, and cute melodic anime sparkle / chime when tapped or clicked
  */
 export function playTapSound() {
   const ctx = getAudioContext();
   if (!ctx) return;
 
   const now = ctx.currentTime;
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
 
-  osc.type = 'triangle';
-  // Springy boing curve: starts, dips, shoots up, stabilizes
-  osc.frequency.setValueAtTime(320, now);
-  osc.frequency.linearRampToValueAtTime(240, now + 0.04);
-  osc.frequency.exponentialRampToValueAtTime(640, now + 0.14);
-  osc.frequency.exponentialRampToValueAtTime(420, now + 0.28);
+  // Primary sweet tone (cute ascending cheerful anime chirp: D6 -> A6 -> G6)
+  const osc1 = ctx.createOscillator();
+  const gain1 = ctx.createGain();
 
-  gain.gain.setValueAtTime(0.0001, now);
-  gain.gain.linearRampToValueAtTime(0.16, now + 0.03);
-  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.3);
+  osc1.type = 'sine';
+  osc1.frequency.setValueAtTime(1174.66, now); // D6
+  osc1.frequency.exponentialRampToValueAtTime(1760.0, now + 0.08); // A6
+  osc1.frequency.exponentialRampToValueAtTime(1567.98, now + 0.2); // G6 gentle settle
 
-  osc.connect(gain);
-  gain.connect(ctx.destination);
+  gain1.gain.setValueAtTime(0.0001, now);
+  gain1.gain.linearRampToValueAtTime(0.13, now + 0.02);
+  gain1.gain.exponentialRampToValueAtTime(0.0001, now + 0.25);
 
-  osc.start(now);
-  osc.stop(now + 0.31);
+  osc1.connect(gain1);
+  gain1.connect(ctx.destination);
+  osc1.start(now);
+  osc1.stop(now + 0.26);
+
+  // Secondary soft sparkle (high airy bell overtone: C7 -> E7)
+  const osc2 = ctx.createOscillator();
+  const gain2 = ctx.createGain();
+
+  osc2.type = 'triangle';
+  osc2.frequency.setValueAtTime(2093.0, now + 0.03); // C7
+  osc2.frequency.exponentialRampToValueAtTime(2637.0, now + 0.1); // E7
+
+  gain2.gain.setValueAtTime(0.0001, now + 0.03);
+  gain2.gain.linearRampToValueAtTime(0.07, now + 0.06);
+  gain2.gain.exponentialRampToValueAtTime(0.0001, now + 0.26);
+
+  osc2.connect(gain2);
+  gain2.connect(ctx.destination);
+  osc2.start(now + 0.03);
+  osc2.stop(now + 0.27);
 }
 
 /**
