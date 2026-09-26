@@ -11,12 +11,12 @@ import {
   CheckCircle,
   WarningCircle,
   ArrowClockwise,
-  Heart,
   X,
   ArrowsLeftRight,
   Check,
   Copy,
   Warning,
+  Heart,
 } from '@phosphor-icons/react';
 import { Sidebar } from './components/Sidebar';
 import { ThemeSidebar } from './components/ThemeSidebar';
@@ -150,8 +150,17 @@ function BlockScreen({ resetIn }) {
         <p className="text-sm mt-4 max-w-sm themed-modal-muted">
           You have sent too many messages. Please wait 30 minutes before sending more.
         </p>
-<p className="text-sm mt-2 themed-modal-muted">
-          Or switch to <a href="https://muxai.vercel.app/" target="_blank" rel="noreferrer" className="underline font-bold text-red-500 hover:opacity-80">MuxAI</a> for unlimited messages (it's free).
+        <p className="text-sm mt-3 max-w-sm themed-modal-muted">
+          Or switch to{' '}
+          <a
+            href="https://muxai.vercel.app/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-semibold underline themed-link hover:opacity-80 transition-opacity"
+          >
+            MuxAI
+          </a>{' '}
+          for unlimited messages
         </p>
       </motion.div>
     </AnimatePresence>
@@ -227,7 +236,7 @@ export default function App() {
     }
   }, []);
 
-  // Ping server periodically
+  // Ping server periodically & listen for real-time config changes
   useEffect(() => {
     let isMounted = true;
     const checkPing = async () => {
@@ -238,9 +247,21 @@ export default function App() {
     };
     checkPing();
     const interval = setInterval(checkPing, 5000);
+
+    const handleConfigChange = (e) => {
+      const newCfg = e?.detail || getServerConfig();
+      setServerConfigState(newCfg);
+      checkPing();
+    };
+
+    window.addEventListener('server-config-changed', handleConfigChange);
+    window.addEventListener('storage', handleConfigChange);
+
     return () => {
       isMounted = false;
       clearInterval(interval);
+      window.removeEventListener('server-config-changed', handleConfigChange);
+      window.removeEventListener('storage', handleConfigChange);
     };
   }, [serverConfig]);
 
@@ -556,14 +577,19 @@ export default function App() {
 
   // Server Modal Operations
   const openServerModal = () => {
-    setModalServerConfig({ ...serverConfig });
+    const current = getServerConfig();
+    setServerConfigState(current);
+    setModalServerConfig({ ...current });
     setTestStatus({ testing: false, success: null, message: '' });
     setServerModalOpen(true);
   };
 
   const handleTestConnection = async () => {
     setTestStatus({ testing: true, success: null, message: 'Testing connection to server...' });
-    const urlToTest = modalServerConfig.mode === 'custom' ? modalServerConfig.customUrl : '';
+    let urlToTest = modalServerConfig.mode === 'custom' ? modalServerConfig.customUrl.trim() : '';
+    if (urlToTest && !urlToTest.startsWith('http://') && !urlToTest.startsWith('https://')) {
+      urlToTest = 'https://' + urlToTest;
+    }
     const res = await pingServer(urlToTest);
     if (res.online) {
       setTestStatus({
@@ -575,17 +601,28 @@ export default function App() {
       setTestStatus({
         testing: false,
         success: false,
-        message: 'Connection failed.',
+        message: res.error ? `Connection failed: ${res.error}` : 'Connection failed.',
       });
     }
   };
 
-  const handleSaveServerConfig = () => {
-    const saved = saveServerConfig(modalServerConfig);
+  const handleSaveServerConfig = async () => {
+    let url = (modalServerConfig.customUrl || '').trim();
+    if (modalServerConfig.mode === 'custom' && url && !url.startsWith('http://') && !url.startsWith('https://')) {
+      url = 'https://' + url;
+    }
+    const toSave = {
+      mode: modalServerConfig.mode === 'custom' ? 'custom' : 'default',
+      customUrl: url,
+    };
+    const saved = saveServerConfig(toSave);
     setServerConfigState(saved);
+    setModalServerConfig(saved);
     setServerModalOpen(false);
-    // Trigger immediate ping
-    pingServer().then((res) => setIsOnline(res.online));
+
+    // Trigger immediate ping with the newly saved configuration
+    const res = await pingServer(saved.mode === 'custom' ? saved.customUrl : null);
+    setIsOnline(res.online);
   };
 
   // Import handling & Conflict Resolution
@@ -725,7 +762,14 @@ export default function App() {
           </div>
 
           {wifeMode && (
-            <Heart size={22} weight="fill" className="text-rose-500 shrink-0" title="Wife Mode Active" />
+            <button
+              type="button"
+              onClick={handleToggleWifeMode}
+              className="p-1 rounded-lg text-rose-500 hover:scale-110 active:scale-95 transition-transform cursor-pointer flex items-center justify-center"
+              title="Wife Mode Active (Click to disable)"
+            >
+              <Heart size={20} weight="fill" className="text-rose-500 drop-shadow-[0_0_8px_rgba(244,63,94,0.5)]" />
+            </button>
           )}
 
           <div className="ml-auto flex items-center gap-2 sm:gap-3">
@@ -938,6 +982,8 @@ export default function App() {
           onToggleWifeMode={handleToggleWifeMode}
           options={modelOptions}
           onOptionsChange={setModelOptions}
+          isOnline={isOnline}
+          onOpenServerModal={openServerModal}
         />
       </div>
  

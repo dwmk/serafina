@@ -17,6 +17,7 @@ import {
 } from '@phosphor-icons/react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ACCEPTED_FILE_TYPES, parseFile, formatBytes } from '../lib/fileParser';
+import { MascotPuppet } from './MascotPuppet';
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20 MB
 const MAX_FILES = 5;
@@ -27,7 +28,9 @@ export function ChatInput({
   wifeMode, 
   onToggleWifeMode, 
   options = {},
-  onOptionsChange
+  onOptionsChange,
+  isOnline = true,
+  onOpenServerModal
 }) {
   const [value, setValue] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
@@ -112,6 +115,7 @@ export function ChatInput({
   return (
     <div className="w-full px-4 pb-4 pt-2 relative z-10">
       <form onSubmit={submit} className="relative max-w-3xl mx-auto">
+        <MascotPuppet isOnline={isOnline} onOpenServerModal={onOpenServerModal} />
 
         {/* Hidden File Input */}
         <input
