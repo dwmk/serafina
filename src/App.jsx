@@ -599,7 +599,7 @@ export default function App() {
       }
     } catch (err) {
       console.error('Inference error:', err);
-      setError(err?.message || GENERIC_ERROR);
+      setError(GENERIC_ERROR);
       if (isBrowser && !currentAIMsg.content) {
         setMessages(baseMsgs);
       }
