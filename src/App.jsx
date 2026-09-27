@@ -54,8 +54,18 @@ import {
   checkImportClashes,
 } from './lib/storage';
 import { ToolProgressDisplay } from './components/ToolProgress';
+import {
+  BROWSER_MODELS,
+  isBrowserModel,
+  loadBrowserModel,
+  checkWebGPUSupport,
+  cancelActiveDownload,
+  getDownloadedSLMs,
+  refreshDownloadedSLMs,
+} from './lib/browserModels';
+import { BrowserModelModal } from './components/BrowserModelModal';
 
-const VERSIONS = ['v1.6', 'v1.4'];
+const VERSIONS = ['v1.6', 'v1.4', 'v1.3-mini', 'v1.2-mini', 'v1.0-mini'];
 const GENERIC_ERROR = "Action could not be completed. Serafina couldn't receive your message or she couldn't react to it.";
 
 function Logo({ size = 40, className = '', variant = 1, overflow = false }) {
@@ -187,9 +197,28 @@ export default function App() {
     jsonMode: false,
     toolCalling: false,
     temperature: 0.6,
+    maxTokens: 512,
   });
   const [toolProgress, setToolProgress] = useState(null);
   const [copiedId, setCopiedId] = useState(null);
+
+  // Browser SLM state
+  const [browserConsentModal, setBrowserConsentModal] = useState(null);
+  const [browserDevice, setBrowserDevice] = useState('webgpu');
+  const [browserModelStatus, setBrowserModelStatus] = useState({ status: 'ready', progress: 100, text: '' });
+  const [telemetry, setTelemetry] = useState({ tokensPerSec: 0, ttftMs: 0, totalTimeSec: 0, tokenCount: 0, isGenerating: false });
+  const [downloadedSLMs, setDownloadedSLMs] = useState(() => getDownloadedSLMs());
+
+  useEffect(() => {
+    refreshDownloadedSLMs().then((list) => {
+      if (list && list.length > 0) setDownloadedSLMs(list);
+    });
+    const handleDownloaded = () => {
+      setDownloadedSLMs(getDownloadedSLMs());
+    };
+    window.addEventListener('serafina:slm_downloaded', handleDownloaded);
+    return () => window.removeEventListener('serafina:slm_downloaded', handleDownloaded);
+  }, []);
 
   // Server modal state
   const [serverModalOpen, setServerModalOpen] = useState(false);
@@ -235,6 +264,84 @@ export default function App() {
       window.history.replaceState({}, '', window.location.pathname);
     }
   }, []);
+
+  // Detect WebGPU availability on startup
+  useEffect(() => {
+    checkWebGPUSupport().then((hasGPU) => {
+      if (!hasGPU) {
+        setBrowserDevice('wasm');
+      }
+    });
+  }, []);
+
+  const handleBrowserDeviceChange = async (newDevice) => {
+    if (newDevice === browserDevice) return;
+    cancelActiveDownload();
+    setBrowserDevice(newDevice);
+    if (isBrowserModel(version)) {
+      setBrowserModelStatus({
+        status: 'loading',
+        progress: 10,
+        text: `Switching to ${newDevice.toUpperCase()}...`,
+      });
+      try {
+        await loadBrowserModel(version, newDevice, (p) => setBrowserModelStatus(p));
+      } catch (err) {
+        if (err.name === 'AbortError' || err.message?.includes('aborted')) return;
+        setBrowserModelStatus({
+          status: 'error',
+          progress: 0,
+          text: `Failed on ${newDevice}: ${err.message}`,
+        });
+      }
+    }
+  };
+
+  const handleSelectVersion = (v) => {
+    setVersionDropdown(false);
+    if (v === version) return;
+    // Immediately abort any in-flight download from the previous model
+    cancelActiveDownload();
+    if (isBrowserModel(v)) {
+      // Wife Mode is removed from SLMs
+      setWifeMode(false);
+      setWifeEnabled(false);
+      setBrowserConsentModal(v);
+    } else {
+      setVersion(v);
+      setBrowserModelStatus({ status: 'ready', progress: 100, text: '' });
+    }
+  };
+
+  const handleConfirmBrowserConsent = () => {
+    if (!browserConsentModal) return;
+    const targetVer = browserConsentModal;
+    setBrowserConsentModal(null);
+    // Cancel any previous download before starting the new one
+    cancelActiveDownload();
+    setVersion(targetVer);
+    setBrowserModelStatus({
+      status: 'downloading',
+      progress: 5,
+      text: `Preparing ${BROWSER_MODELS[targetVer]?.name}...`,
+    });
+    loadBrowserModel(targetVer, browserDevice, (p) => {
+      setBrowserModelStatus(p);
+    }).catch((err) => {
+      if (err.name === 'AbortError' || err.message?.includes('aborted')) return;
+      console.error('Failed to load browser model:', err);
+      setBrowserModelStatus({
+        status: 'error',
+        progress: 0,
+        text: `Failed to load: ${err.message}`,
+      });
+    });
+  };
+
+  const handleCancelBrowserConsent = () => {
+    cancelActiveDownload();
+    setBrowserConsentModal(null);
+  };
 
   // Ping server periodically & listen for real-time config changes
   useEffect(() => {
@@ -364,27 +471,53 @@ export default function App() {
     setError('');
     setToolProgress({ phase: 'thinking' });
 
+    const isBrowser = isBrowserModel(version);
     const tools = modelOptions.toolCalling ? TOOL_DEFINITIONS : null;
     const browserInfo = getBrowserInfo();
     const MAX_TOOL_ROUNDS = 5;
     let gotFinalReply = false;
+
+    // Create an assistant message placeholder that can stream tokens in real-time
+    const aiMsgId = `msg_a_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    let currentAIMsg = {
+      id: aiMsgId,
+      role: 'assistant',
+      content: '',
+    };
+
+    if (isBrowser) {
+      setMessages([...baseMsgs, currentAIMsg]);
+    }
 
     try {
       for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
         const data = await fetchAIReply(conversationHistory, wifeMode, version, {
           jsonMode: modelOptions.jsonMode,
           temperature: modelOptions.temperature,
+          maxTokens: modelOptions.maxTokens || 512,
           tools: round === 0 ? tools : null,
+          browserDevice,
+          onStream: isBrowser ? (streamedText) => {
+            currentAIMsg = {
+              id: aiMsgId,
+              role: 'assistant',
+              content: streamedText,
+            };
+            setMessages([...baseMsgs, currentAIMsg]);
+          } : null,
+          onTelemetry: isBrowser ? (t) => {
+            setTelemetry(t);
+          } : null,
         });
 
         if (!data.toolCalls || !Array.isArray(data.toolCalls) || data.toolCalls.length === 0) {
-          const replyText = data.reply || '';
-          const aiMsg = {
-            id: `msg_a_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          const replyText = data.reply || currentAIMsg.content || '';
+          const finalAIMsg = {
+            id: aiMsgId,
             role: 'assistant',
             content: replyText,
           };
-          const finalMsgs = [...baseMsgs, aiMsg];
+          const finalMsgs = [...baseMsgs, finalAIMsg];
           setMessages(finalMsgs);
           persistMessages(convId, finalMsgs);
           const info = recordMessage();
@@ -436,23 +569,40 @@ export default function App() {
         const finalData = await fetchAIReply(conversationHistory, wifeMode, version, {
           jsonMode: modelOptions.jsonMode,
           temperature: modelOptions.temperature,
+          maxTokens: modelOptions.maxTokens || 512,
           tools: null,
+          browserDevice,
+          onStream: isBrowser ? (streamedText) => {
+            currentAIMsg = {
+              id: aiMsgId,
+              role: 'assistant',
+              content: streamedText,
+            };
+            setMessages([...baseMsgs, currentAIMsg]);
+          } : null,
+          onTelemetry: isBrowser ? (t) => {
+            setTelemetry(t);
+          } : null,
         });
-        const replyText = finalData.reply || 'I was unable to process the tool results.';
-        const aiMsg = {
-          id: `msg_a_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        const replyText = finalData.reply || currentAIMsg.content || 'I was unable to process the tool results.';
+        const finalAIMsg = {
+          id: aiMsgId,
           role: 'assistant',
           content: replyText,
         };
-        const finalMsgs = [...baseMsgs, aiMsg];
+        const finalMsgs = [...baseMsgs, finalAIMsg];
         setMessages(finalMsgs);
         persistMessages(convId, finalMsgs);
         const info = recordMessage();
         setRateInfo(info);
         maybeGenerateTitle(convId, finalMsgs);
       }
-    } catch {
-      setError(GENERIC_ERROR);
+    } catch (err) {
+      console.error('Inference error:', err);
+      setError(err?.message || GENERIC_ERROR);
+      if (isBrowser && !currentAIMsg.content) {
+        setMessages(baseMsgs);
+      }
     } finally {
       setLoading(false);
       setToolProgress(null);
@@ -715,7 +865,7 @@ export default function App() {
       <div className="themed-grid-bg fixed inset-0 z-0 pointer-events-none opacity-[0.03]" />
 
       <div className="absolute inset-0 flex flex-col z-10">
-        <header className="themed-header flex items-center gap-2 sm:gap-3 p-3 sm:p-4 border-b backdrop-blur-xl">
+        <header className="themed-header relative z-[100] flex items-center gap-2 sm:gap-3 p-3 sm:p-4 border-b backdrop-blur-xl">
           <button
             type="button"
             onClick={() => {
@@ -732,7 +882,7 @@ export default function App() {
             <span className="font-bold text-base sm:text-lg">Serafina</span>
           </div>
 
-          <div className="relative" ref={versionMenuRef}>
+          <div className="relative z-[110]" ref={versionMenuRef}>
             <button
               type="button"
               onClick={() => setVersionDropdown((v) => !v)}
@@ -743,25 +893,41 @@ export default function App() {
             </button>
             {versionDropdown && (
               <div
-                className="themed-dropdown absolute top-full left-0 mt-2 w-28 sm:w-32 border rounded-xl shadow-2xl overflow-hidden z-20"
+                className="themed-dropdown absolute top-full left-0 mt-2 w-40 sm:w-48 border rounded-xl shadow-2xl overflow-hidden z-[9999] py-1"
               >
-                {VERSIONS.map((v) => (
-                  <button
-                    key={v}
-                    type="button"
-                    onClick={() => { setVersion(v); setVersionDropdown(false); }}
-                    className={`w-full text-left px-3 sm:px-4 py-2.5 text-xs sm:text-sm transition-colors ${
-                      v === version ? 'themed-version-active' : 'themed-version-inactive'
-                    }`}
-                  >
-                    {v}
-                  </button>
-                ))}
+                {VERSIONS.map((v) => {
+                  const isMini = isBrowserModel(v);
+                  const isDownloaded = isMini && downloadedSLMs.includes(v);
+                  return (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => handleSelectVersion(v)}
+                      className={`w-full text-left px-3 sm:px-4 py-2 text-xs sm:text-sm transition-colors flex items-center justify-between ${
+                        v === version ? 'themed-version-active font-bold' : 'themed-version-inactive'
+                      }`}
+                    >
+                      <span>{v}</span>
+                      {isMini && (
+                        <span
+                          className={`text-[10px] font-mono uppercase px-1.5 py-0.5 rounded font-semibold border transition-colors ${
+                            isDownloaded
+                              ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40 shadow-xs'
+                              : 'bg-pink-500/15 text-pink-400 border border-pink-500/20'
+                          }`}
+                          title={isDownloaded ? 'Cached in persistent browser storage' : 'Requires initial download'}
+                        >
+                          SLM
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>
 
-          {wifeMode && (
+          {wifeMode && !isBrowserModel(version) && (
             <button
               type="button"
               onClick={handleToggleWifeMode}
@@ -773,19 +939,21 @@ export default function App() {
           )}
 
           <div className="ml-auto flex items-center gap-2 sm:gap-3">
-            <button
-              onClick={openServerModal}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs sm:text-sm font-bold transition-all cursor-pointer hover:opacity-90 active:scale-95 ${
-                isOnline ? 'themed-online' : 'themed-offline'
-              }`}
-              title="Click to configure backend server & custom ngrok URL"
-            >
-              <div className={`w-2 h-2 rounded-full ${isOnline ? 'bg-current shadow-[0_0_8px_currentColor] animate-pulse' : 'bg-zinc-400'}`} />
-              <span>{isOnline ? 'Online' : 'Offline'}</span>
-              <span className="text-[10px] opacity-75 font-normal uppercase hidden sm:inline">
-                ({serverConfig.mode})
-              </span>
-            </button>
+            {!isBrowserModel(version) && (
+              <button
+                onClick={openServerModal}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs sm:text-sm font-bold transition-all cursor-pointer hover:opacity-90 active:scale-95 ${
+                  isOnline ? 'themed-online' : 'themed-offline'
+                }`}
+                title="Click to configure backend server & custom ngrok URL"
+              >
+                <div className={`w-2 h-2 rounded-full ${isOnline ? 'bg-current shadow-[0_0_8px_currentColor] animate-pulse' : 'bg-zinc-400'}`} />
+                <span>{isOnline ? 'Online' : 'Offline'}</span>
+                <span className="text-[10px] opacity-75 font-normal uppercase hidden sm:inline">
+                  ({serverConfig.mode})
+                </span>
+              </button>
+            )}
 
             <button
               type="button"
@@ -984,6 +1152,12 @@ export default function App() {
           onOptionsChange={setModelOptions}
           isOnline={isOnline}
           onOpenServerModal={openServerModal}
+          isBrowserModel={isBrowserModel(version)}
+          browserModelStatus={browserModelStatus}
+          telemetry={telemetry}
+          browserDevice={browserDevice}
+          onBrowserDeviceChange={handleBrowserDeviceChange}
+          browserModelName={BROWSER_MODELS[version]?.name || version}
         />
       </div>
  
@@ -1338,6 +1512,17 @@ export default function App() {
               )}
             </motion.div>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Browser SLM Consent Modal */}
+      <AnimatePresence>
+        {browserConsentModal && (
+          <BrowserModelModal
+            targetVersion={browserConsentModal}
+            onConfirm={handleConfirmBrowserConsent}
+            onCancel={handleCancelBrowserConsent}
+          />
         )}
       </AnimatePresence>
 

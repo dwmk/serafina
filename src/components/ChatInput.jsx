@@ -18,6 +18,7 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import { ACCEPTED_FILE_TYPES, parseFile, formatBytes } from '../lib/fileParser';
 import { MascotPuppet } from './MascotPuppet';
+import { BrowserStatusBar } from './BrowserStatusBar';
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20 MB
 const MAX_FILES = 5;
@@ -30,13 +31,21 @@ export function ChatInput({
   options = {},
   onOptionsChange,
   isOnline = true,
-  onOpenServerModal
+  onOpenServerModal,
+  isBrowserModel = false,
+  browserModelStatus = { status: 'ready', progress: 100, text: '' },
+  telemetry = { tokensPerSec: 0, ttftMs: 0, totalTimeSec: 0, tokenCount: 0, isGenerating: false },
+  browserDevice = 'webgpu',
+  onBrowserDeviceChange,
+  browserModelName = '',
 }) {
   const [value, setValue] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
   const [attachments, setAttachments] = useState([]); // [{ file, parsed, preview, parsing, error }]
   const [parsing, setParsing] = useState(false);
   const fileInputRef = useRef(null);
+
+  const isModelBusy = isBrowserModel && (browserModelStatus?.status === 'downloading' || browserModelStatus?.status === 'loading');
 
   const isImage = (file) => file.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(file.name);
 
@@ -115,7 +124,7 @@ export function ChatInput({
   return (
     <div className="w-full px-4 pb-4 pt-2 relative z-10">
       <form onSubmit={submit} className="relative max-w-3xl mx-auto">
-        <MascotPuppet isOnline={isOnline} onOpenServerModal={onOpenServerModal} />
+        <MascotPuppet isOnline={isOnline} onOpenServerModal={onOpenServerModal} isBrowserModel={isBrowserModel} />
 
         {/* Hidden File Input */}
         <input
@@ -265,10 +274,39 @@ export function ChatInput({
                     className="w-full accent-pink-500 cursor-pointer h-1 bg-zinc-700 rounded-lg"
                   />
                 </div>
+
+                {/* Max Tokens Slider */}
+                <div className="p-2.5 rounded-xl border border-white/5 mt-2">
+                  <div className="flex justify-between items-center text-xs mb-1.5">
+                    <span className="flex items-center gap-1.5 text-zinc-400">
+                      <SlidersHorizontal size={16} /> Max Tokens
+                    </span>
+                    <span className="font-mono text-xs font-bold">{options.maxTokens ?? 512}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="64"
+                    max="2048"
+                    step="64"
+                    value={options.maxTokens ?? 512}
+                    onChange={(e) => onOptionsChange?.({ ...options, maxTokens: parseInt(e.target.value, 10) })}
+                    className="w-full accent-pink-500 cursor-pointer h-1 bg-zinc-700 rounded-lg"
+                  />
+                </div>
               </motion.div>
             </>
           )}
         </AnimatePresence>
+
+        {/* Status Bar on top of the top edge of the chat input panel */}
+        {isBrowserModel && (
+          <BrowserStatusBar
+            modelStatus={browserModelStatus}
+            telemetry={telemetry}
+            device={browserDevice}
+            modelName={browserModelName}
+          />
+        )}
 
         <div className={`flex items-end gap-2 backdrop-blur-xl border rounded-3xl shadow-lg transition-colors pl-3 sm:pl-4 pr-2 py-2 themed-input relative z-10`}>
           
@@ -288,40 +326,82 @@ export function ChatInput({
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(e); }
             }}
-            placeholder="Type a message..."
+            placeholder={
+              isModelBusy
+                ? `Downloading & initializing ${browserModelName}...`
+                : 'Type a message...'
+            }
             rows={1}
-            disabled={disabled}
+            disabled={disabled || isModelBusy}
             className={`flex-1 bg-transparent outline-none resize-none font-medium text-sm sm:text-base py-3 max-h-40 disabled:opacity-50 themed-text`}
             style={{ minHeight: '24px' }}
           />
 
           <button
             type="submit"
-            disabled={disabled || (!value.trim() && attachments.filter((a) => a.parsed && !a.error).length === 0) || parsing}
+            disabled={disabled || isModelBusy || (!value.trim() && attachments.filter((a) => a.parsed && !a.error).length === 0) || parsing}
             className={`w-10 h-10 sm:w-11 sm:h-11 shrink-0 rounded-full flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed transition-colors themed-send-btn`}
           >
-            {parsing ? <SpinnerGap size={18} className="animate-spin" /> : <PaperPlaneTilt size={18} weight="fill" />}
+            {parsing || isModelBusy ? <SpinnerGap size={18} className="animate-spin" /> : <PaperPlaneTilt size={18} weight="fill" />}
           </button>
         </div>
 
         <div className="flex items-center justify-between gap-3 mt-3 px-2">
-          {/* Wife Mode - bottom left */}
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={onToggleWifeMode}
-              className={`flex items-center gap-1.5 text-xs font-medium transition-colors ${wifeMode ? 'themed-wife-accent-text' : 'themed-sidebar-muted'}`}
-            >
-              {wifeMode ? <LockOpen size={14} weight="fill" /> : <Lock size={14} />}
-              <span>Wife Mode</span>
-            </button>
-            <button
-              type="button"
-              onClick={onToggleWifeMode}
-              className={`relative w-9 h-5 rounded-full transition-colors ${wifeMode ? 'bg-[var(--wife-accent)]' : 'bg-[var(--offline-bg)]'}`}
-            >
-              <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${wifeMode ? 'translate-x-4' : ''}`} />
-            </button>
+          {/* Bottom Left Controls: Wife Mode (server only) or Engine Switch (SLM only) */}
+          <div className="flex items-center gap-3 select-none flex-wrap">
+            {/* Wife Mode - available on server models, removed on browser SLM models */}
+            {!isBrowserModel && (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={onToggleWifeMode}
+                  className={`flex items-center gap-1.5 text-xs font-medium transition-colors ${wifeMode ? 'themed-wife-accent-text' : 'themed-sidebar-muted'}`}
+                >
+                  {wifeMode ? <LockOpen size={14} weight="fill" /> : <Lock size={14} />}
+                  <span>Wife Mode</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={onToggleWifeMode}
+                  className={`relative w-9 h-5 rounded-full transition-colors ${wifeMode ? 'bg-[var(--wife-accent)]' : 'bg-[var(--offline-bg)]'}`}
+                >
+                  <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full transition-transform ${wifeMode ? 'translate-x-4' : ''}`} />
+                </button>
+              </div>
+            )}
+
+            {/* WebGPU / WASM Engine Tabbed Switch for browser models */}
+            {isBrowserModel && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-medium themed-sidebar-muted hidden xs:inline">Engine:</span>
+                <div className="flex items-center p-0.5 rounded-xl border border-inherit bg-black/5 dark:bg-white/5 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => onBrowserDeviceChange?.('webgpu')}
+                    className={`px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                      browserDevice === 'webgpu'
+                        ? 'bg-pink-600 text-white shadow-xs'
+                        : 'themed-sidebar-muted hover:text-current'
+                    }`}
+                    title="Hardware accelerated WebGPU"
+                  >
+                    WebGPU
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onBrowserDeviceChange?.('wasm')}
+                    className={`px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                      browserDevice === 'wasm'
+                        ? 'bg-pink-600 text-white shadow-xs'
+                        : 'themed-sidebar-muted hover:text-current'
+                    }`}
+                    title="CPU WebAssembly fallback"
+                  >
+                    WASM
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Active capability indicators */}

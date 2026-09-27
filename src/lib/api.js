@@ -1,5 +1,6 @@
 // src/lib/api.js
 import { getServerConfig } from './storage';
+import { isBrowserModel, runBrowserChatCompletion } from './browserModels';
 
 export function getCustomServerUrl() {
   const cfg = getServerConfig();
@@ -76,6 +77,21 @@ export async function fetchAIReply(
   version = 'v1.6', 
   options = {}
 ) {
+  // If browser-side model (v1.0-mini, v1.2-mini, v1.3-mini), route directly to local Transformers.js pipeline
+  if (isBrowserModel(version)) {
+    return await runBrowserChatCompletion({
+      messages,
+      version,
+      jsonMode: options.jsonMode,
+      tools: options.tools,
+      temperature: options.temperature,
+      maxTokens: options.maxTokens,
+      device: options.browserDevice || 'webgpu',
+      onStream: options.onStream,
+      onTelemetry: options.onTelemetry,
+    });
+  }
+
   const { jsonMode = false, tools = null, temperature = 0.6 } = options;
   const customServerUrl = getCustomServerUrl();
   const cfg = getServerConfig();
@@ -114,7 +130,33 @@ export async function verifyWifePassword(password) {
   return data.valid === true;
 }
 
+let cachedSystemPrompts = {};
+
+export async function fetchSystemPrompts(version = 'v1.6') {
+  if (cachedSystemPrompts[version]) return cachedSystemPrompts[version];
+  try {
+    const res = await fetch(`/api/prompts?version=${encodeURIComponent(version)}`);
+    if (res.ok) {
+      const data = await res.json();
+      cachedSystemPrompts[version] = data;
+      return data;
+    }
+  } catch (err) {
+    console.warn('Could not fetch prompts from server:', err);
+  }
+  return null;
+}
+
 export async function generateTitle(messages, version = 'v1.6') {
+  // For browser-side models, generate title without calling remote Ollama server
+  if (isBrowserModel(version)) {
+    const firstUserMsg = (messages || []).find((m) => m.role === 'user')?.content || 'Conversation';
+    const clean = typeof firstUserMsg === 'string'
+      ? firstUserMsg.replace(/\n+/g, ' ').replace(/[^\w\s-]/g, '').trim().split(/\s+/).slice(0, 4).join(' ')
+      : 'Conversation';
+    return clean ? clean.charAt(0).toUpperCase() + clean.slice(1) : 'Conversation';
+  }
+
   const customServerUrl = getCustomServerUrl();
   const cfg = getServerConfig();
   const res = await fetch('/api/generate-title', {

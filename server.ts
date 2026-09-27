@@ -94,6 +94,12 @@ function getPrompts(version: string) {
       special: process.env.SPECIALPROMPT_V14 || defaultSpecialV14,
     };
   }
+  if (version.includes('mini')) {
+    return {
+      system: process.env.PROMPT_MINI || process.env.PROMPT || defaultSystemV16,
+      special: process.env.SPECIALPROMPT_MINI || process.env.SPECIALPROMPT || defaultSpecialV16,
+    };
+  }
   return {
     system: process.env.PROMPT || defaultSystemV16,
     special: process.env.SPECIALPROMPT || defaultSpecialV16,
@@ -192,6 +198,13 @@ async function startServer() {
       return res.status(200).json({ valid: true });
     }
     return res.status(401).json({ valid: false, error: 'Incorrect password' });
+  });
+
+  // GET /api/prompts
+  app.get('/api/prompts', (req, res) => {
+    const version = (req.query.version as string) || 'v1.6';
+    const prompts = getPrompts(version);
+    return res.status(200).json(prompts);
   });
 
   // POST /api/web-search

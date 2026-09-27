@@ -26,7 +26,7 @@ function getTimeGreeting() {
   return 'Late night, isn’t it?';
 }
 
-export function MascotPuppet({ isOnline = true, onOpenServerModal }) {
+export function MascotPuppet({ isOnline = true, onOpenServerModal, isBrowserModel = false }) {
   const [dismissed, setDismissed] = useState(false);
   const [currentMessage, setCurrentMessage] = useState(getTimeGreeting());
   const [eyeOffset, setEyeOffset] = useState({ x: 0, y: 0 });
@@ -34,7 +34,7 @@ export function MascotPuppet({ isOnline = true, onOpenServerModal }) {
   const puppetRef = useRef(null);
 
   // Track if server was ever detected as offline in this session
-  const serverWasOfflineRef = useRef(!isOnline);
+  const serverWasOfflineRef = useRef(!isOnline && !isBrowserModel);
 
   // Mouse eye-tracking physics (subtle, very tiny movements only: max 2.4px)
   useEffect(() => {
@@ -82,11 +82,12 @@ export function MascotPuppet({ isOnline = true, onOpenServerModal }) {
     }
   }, [currentMessage, dismissed]);
 
-  // Dialogue sequencing and automatic exit upon server being online
+  // Dialogue sequencing and automatic exit upon server being online or browser model active
   useEffect(() => {
     let t1, t2, t3, tExit;
+    const effectiveOnline = isBrowserModel ? true : isOnline;
 
-    if (!isOnline) {
+    if (!effectiveOnline) {
       serverWasOfflineRef.current = true;
       setCurrentMessage(getTimeGreeting());
 
@@ -105,10 +106,10 @@ export function MascotPuppet({ isOnline = true, onOpenServerModal }) {
         setCurrentMessage(OFFLINE_STEP_3_TEXT);
       }, 10500);
     } else {
-      // Server is ONLINE
+      // Server is ONLINE or Browser Model is active
       if (serverWasOfflineRef.current) {
         // Was previously offline (after detecting offline or server selection advice)
-        setCurrentMessage('Ah, the server is online now!');
+        setCurrentMessage(isBrowserModel ? 'Running directly in your browser!' : 'Ah, the server is online now!');
         t1 = setTimeout(() => {
           setCurrentMessage('Talk to me by typing messages here');
           // Wait a few seconds after the last message is sent, then exit
@@ -118,11 +119,10 @@ export function MascotPuppet({ isOnline = true, onOpenServerModal }) {
           }, 3800);
         }, 2800);
       } else {
-        // Server was online at moment of page visit / reload:
-        // Wait 2 seconds at greeting message before proceeding to "Ah, the server is online now!"
+        // Online at moment of page visit / reload:
         setCurrentMessage(getTimeGreeting());
         t1 = setTimeout(() => {
-          setCurrentMessage('Ah, the server is online now!');
+          setCurrentMessage(isBrowserModel ? 'Running directly in your browser!' : 'Ah, the server is online now!');
           t2 = setTimeout(() => {
             setCurrentMessage('Talk to me by typing messages here');
             // Wait a few seconds after the last message is sent, then exit
@@ -141,7 +141,7 @@ export function MascotPuppet({ isOnline = true, onOpenServerModal }) {
       clearTimeout(t3);
       clearTimeout(tExit);
     };
-  }, [isOnline]);
+  }, [isOnline, isBrowserModel]);
 
   const handlePuppetClick = () => {
     // Play cute bouncy sound & animation, do NOT dismiss her
