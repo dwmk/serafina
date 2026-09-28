@@ -535,7 +535,7 @@ export default function App() {
           name: tc.function?.name || 'unknown',
           status: 'pending',
         }));
-        setToolProgress({ phase: 'calling_tools', tools: toolProgressList });
+        setToolProgress({ phase: 'calling_tools', tools: [...toolProgressList] });
 
         const toolResultParts = [];
 
