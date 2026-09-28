@@ -202,59 +202,64 @@ export function ChatInput({
                   Extra Capabilities
                 </div>
 
-                {/* File Attachment Option (Located ABOVE JSON Output Mode) */}
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={disabled || attachments.length >= MAX_FILES}
-                  className={`w-full flex items-center justify-between p-2.5 rounded-xl text-xs transition-colors mb-1 themed-sidebar-hover disabled:opacity-40 disabled:cursor-not-allowed`}
-                >
-                  <div className="flex items-center gap-2">
-                    <Paperclip size={18} />
-                    <span>Attach Files</span>
-                  </div>
-                  <span className="font-mono text-[10px] text-zinc-400">
-                    {attachments.length}/{MAX_FILES}
-                  </span>
-                </button>
+                {/* Capabilities for server models: Attach Files, JSON Mode, Tool Calling (Hidden on SLMs) */}
+                {!isBrowserModel && (
+                  <>
+                    {/* File Attachment Option */}
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={disabled || attachments.length >= MAX_FILES}
+                      className={`w-full flex items-center justify-between p-2.5 rounded-xl text-xs transition-colors mb-1 themed-sidebar-hover disabled:opacity-40 disabled:cursor-not-allowed`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <Paperclip size={18} />
+                        <span>Attach Files</span>
+                      </div>
+                      <span className="font-mono text-[10px] text-zinc-400">
+                        {attachments.length}/{MAX_FILES}
+                      </span>
+                    </button>
 
-                {/* Structured JSON Mode Toggle */}
-                <button
-                  type="button"
-                  onClick={() => onOptionsChange?.({ ...options, jsonMode: !options.jsonMode })}
-                  className={`w-full flex items-center justify-between p-2.5 rounded-xl text-xs transition-colors mb-1 ${
-                    options.jsonMode 
-                      ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
-                      : 'themed-sidebar-hover'
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <BracketsCurly size={18} />
-                    <span>JSON Output Mode</span>
-                  </div>
-                  <span className="font-mono text-[10px] uppercase font-bold px-1.5 py-0.5 rounded border border-current">
-                    {options.jsonMode ? 'ON' : 'OFF'}
-                  </span>
-                </button>
+                    {/* Structured JSON Mode Toggle */}
+                    <button
+                      type="button"
+                      onClick={() => onOptionsChange?.({ ...options, jsonMode: !options.jsonMode })}
+                      className={`w-full flex items-center justify-between p-2.5 rounded-xl text-xs transition-colors mb-1 ${
+                        options.jsonMode 
+                          ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
+                          : 'themed-sidebar-hover'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <BracketsCurly size={18} />
+                        <span>JSON Output Mode</span>
+                      </div>
+                      <span className="font-mono text-[10px] uppercase font-bold px-1.5 py-0.5 rounded border border-current">
+                        {options.jsonMode ? 'ON' : 'OFF'}
+                      </span>
+                    </button>
 
-                {/* Tool / Function Calling Toggle */}
-                <button
-                  type="button"
-                  onClick={() => onOptionsChange?.({ ...options, toolCalling: !options.toolCalling })}
-                  className={`w-full flex items-center justify-between p-2.5 rounded-xl text-xs transition-colors mb-1 ${
-                    options.toolCalling 
-                      ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' 
-                      : 'themed-sidebar-hover'
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <Wrench size={18} />
-                    <span>Tool Calling Agent</span>
-                  </div>
-                  <span className="font-mono text-[10px] uppercase font-bold px-1.5 py-0.5 rounded border border-current">
-                    {options.toolCalling ? 'ON' : 'OFF'}
-                  </span>
-                </button>
+                    {/* Tool / Function Calling Toggle */}
+                    <button
+                      type="button"
+                      onClick={() => onOptionsChange?.({ ...options, toolCalling: !options.toolCalling })}
+                      className={`w-full flex items-center justify-between p-2.5 rounded-xl text-xs transition-colors mb-1 ${
+                        options.toolCalling 
+                          ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' 
+                          : 'themed-sidebar-hover'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <Wrench size={18} />
+                        <span>Tool Calling Agent</span>
+                      </div>
+                      <span className="font-mono text-[10px] uppercase font-bold px-1.5 py-0.5 rounded border border-current">
+                        {options.toolCalling ? 'ON' : 'OFF'}
+                      </span>
+                    </button>
+                  </>
+                )}
 
                 {/* Temperature/Creativity Slider */}
                 <div className="p-2.5 rounded-xl border border-white/5 mt-2">

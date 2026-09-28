@@ -306,6 +306,11 @@ export default function App() {
       // Wife Mode is removed from SLMs
       setWifeMode(false);
       setWifeEnabled(false);
+      setModelOptions((prev) => ({
+        ...prev,
+        toolCalling: false,
+        jsonMode: false,
+      }));
       setBrowserConsentModal(v);
     } else {
       setVersion(v);
@@ -484,10 +489,7 @@ export default function App() {
       role: 'assistant',
       content: '',
     };
-
-    if (isBrowser) {
-      setMessages([...baseMsgs, currentAIMsg]);
-    }
+    let hasStreamedToken = false;
 
     try {
       for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
@@ -498,6 +500,10 @@ export default function App() {
           tools: round === 0 ? tools : null,
           browserDevice,
           onStream: isBrowser ? (streamedText) => {
+            if (!hasStreamedToken && streamedText) {
+              hasStreamedToken = true;
+              setToolProgress(null);
+            }
             currentAIMsg = {
               id: aiMsgId,
               role: 'assistant',
@@ -573,6 +579,10 @@ export default function App() {
           tools: null,
           browserDevice,
           onStream: isBrowser ? (streamedText) => {
+            if (!hasStreamedToken && streamedText) {
+              hasStreamedToken = true;
+              setToolProgress(null);
+            }
             currentAIMsg = {
               id: aiMsgId,
               role: 'assistant',
@@ -1119,7 +1129,7 @@ export default function App() {
               ))}
             </div>
 
-            {loading && (
+            {loading && (!isBrowserModel(version) || toolProgress !== null) && (
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}

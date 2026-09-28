@@ -400,30 +400,15 @@ export function formatChatMLPrompt(systemContent, recentHistory) {
   return prompt;
 }
 
-export function buildBrowserSystemPrompt({
-  jsonMode = false,
-  tools = null,
-}) {
-  const basePersona = SERAPHINA_SLM_SYSTEM_PROMPT;
-
-  let contextualPrompt = `${basePersona}\n\n--- CURRENT CONTEXT ---\nMaintain your established persona, instructions, and formatting strictly in your next response.\n\n--- MATH FORMATTING ---\nWhen writing mathematical expressions, use LaTeX notation wrapped in dollar signs. Use $...$ for inline math (e.g. $E = mc^2$) and $$...$$ for display/block math (e.g. $$\\int_0^\\infty e^{-x^2} dx = \\frac{\\sqrt{\\pi}}{2}$$). Always use \\frac for fractions, \\sum for summations, \\sqrt for roots, etc. Never use plain-text math notation like "x^2" or "1/2" when LaTeX is available.`;
-
-  if (jsonMode) {
-    contextualPrompt += '\n\nIMPORTANT: You must respond ONLY with valid JSON formatting.';
-  }
-
-  if (tools && Array.isArray(tools) && tools.length > 0) {
-    const toolNames = tools.map((t) => t.function?.name || t.name).join(', ');
-    contextualPrompt += `\n\n--- TOOL USE INSTRUCTIONS ---\nYou have access to these tools: ${toolNames}.\nWhen the user asks for real-time data (weather, time, prices, web search, etc.), you MUST call the appropriate tool instead of guessing.\nOnly call tools from the list above. Format: <function=tool_name>{"arg": "value"}</function>.`;
-  }
-
-  return contextualPrompt;
+export function buildBrowserSystemPrompt(version = 'v1.2-mini') {
+  const modelMeta = BROWSER_MODELS[version];
+  return modelMeta?.systemPrompt || SERAPHINA_SLM_SYSTEM_PROMPT;
 }
 
 export async function runBrowserChatCompletion({
   messages = [],
   version = 'v1.2-mini',
-  jsonMode = false,
+  jsonMode: _jsonMode = false,
   tools = null,
   temperature = 0.6,
   maxTokens = 512,
@@ -441,11 +426,8 @@ export async function runBrowserChatCompletion({
     throw new Error(`Model ${modelMeta.name} is not loaded.`);
   }
 
-  // Exact Seraphina private consultant character prompt
-  const systemContent = buildBrowserSystemPrompt({
-    jsonMode,
-    tools,
-  });
+  // Lightweight predefined Seraphina private consultant character prompt for SLMs
+  const systemContent = buildBrowserSystemPrompt(version);
 
   // SLM context window management: keep recent 10-16 messages
   const maxHistoryCount = tools && Array.isArray(tools) && tools.length > 0 ? 16 : 10;
