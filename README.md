@@ -1,8 +1,13 @@
 # Serafina Web
 
-> An intelligent, reserved romanticist AI companion and conversational platform designed with literary elegance, Live2D-inspired interactive aesthetics, and on-device browser Small Language Models (SLMs).
+> An intelligent, reserved romanticist AI companion and conversational platform
 
+![](https://serafina-ai.vercel.app/og-image.png)
 ---
+
+### [🌐 [Visit the website]](https://serafina-ai.vercel.app)    [:octocat: [Visit the company repo]](https://github.com/muxai/muxai-platform)
+
+Previously, the main project started off from [this repository](https://github.com/dwmk/seraphina-web).
 
 ## 🌟 Overview
 
