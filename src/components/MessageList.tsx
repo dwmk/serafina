@@ -1,6 +1,7 @@
 import React, { useRef, useEffect } from 'react';
 import { Message, ModelSpec } from '../types';
 import { MessageItem } from './MessageItem';
+import { MarkdownRenderer } from './MarkdownRenderer';
 import { AI_PROFILE, STARTER_PROMPTS, APP_INFO } from '../constants';
 
 interface MessageListProps {
@@ -156,8 +157,8 @@ export const MessageList: React.FC<MessageListProps> = ({
           <div className="flex flex-col max-w-[85%] sm:max-w-[75%] items-start">
             <div className="relative px-4 py-2.5 rounded-2xl text-[14.5px] leading-relaxed bg-white dark:bg-[#1c1f2e] text-neutral-800 dark:text-neutral-100 rounded-tl-sm border border-black/[0.08] dark:border-white/[0.08] shadow-xs">
               {streamingText ? (
-                <div className="whitespace-pre-wrap break-words">
-                  {streamingText}
+                <div className="break-words">
+                  <MarkdownRenderer content={streamingText} />
                   <span className="inline-block w-1.5 h-3.5 ml-1 bg-amber-500 animate-pulse align-middle" />
                 </div>
               ) : (

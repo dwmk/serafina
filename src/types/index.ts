@@ -34,6 +34,7 @@ export interface ModelSpec {
   isSmallModel: boolean;
   description: string;
   speedRating: 'Instant' | 'Ultra Fast' | 'Fast' | 'Balanced' | 'Deep';
+  supportsRichFormatting?: boolean;
   isDefault?: boolean;
   ramRequired?: string;
   endpointUrl?: string;

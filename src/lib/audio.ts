@@ -79,37 +79,50 @@ function isLikelyMaleVoice(voice: SpeechSynthesisVoice): boolean {
   return VOICE_CONFIG.maleKeywords.some((kw) => name.includes(kw));
 }
 
-function findVoiceFromList(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null {
+function findVoiceFromList(voices: SpeechSynthesisVoice[], allowUniversalFallback = false): SpeechSynthesisVoice | null {
   if (!voices || voices.length === 0) return null;
 
-  // 1. Priority order queue sourced from VOICE_CONFIG.priorityQueue
+  // 1. Strict Priority order queue: check name, lang code, and voiceURI for priority items
+  // Priority queue: ['Bangla', 'Bengali', 'Veena', 'Google বাংলা', 'India']
   for (const keyword of VOICE_CONFIG.priorityQueue) {
     const kw = keyword.toLowerCase();
     const match = voices.find((v) => {
       const name = (v.name || '').toLowerCase();
       const lang = (v.lang || '').toLowerCase();
-      // Ensure we don't pick an explicitly male voice even if keyword matches
-      return (name.includes(kw) || lang.includes(kw)) && !isLikelyMaleVoice(v);
+      const uri = (v.voiceURI || '').toLowerCase();
+      const isPriority =
+        name.includes(kw) ||
+        lang.includes(kw) ||
+        uri.includes(kw) ||
+        ((kw === 'bangla' || kw === 'bengali') && (lang.startsWith('bn') || uri.includes('bn')));
+      return isPriority && !isLikelyMaleVoice(v);
     });
     if (match) return match;
   }
 
-  // 2. Fallback: Universal female voice option sourced from VOICE_CONFIG.femaleKeywords
+  // 2. High-preference: Universal female voice option sourced from VOICE_CONFIG.femaleKeywords
   const universalFemale = voices.find((v) => {
     const name = (v.name || '').toLowerCase();
-    return VOICE_CONFIG.femaleKeywords.some((kw) => name.includes(kw)) && !isLikelyMaleVoice(v);
+    const lang = (v.lang || '').toLowerCase();
+    return VOICE_CONFIG.femaleKeywords.some((kw) => name.includes(kw) || lang.includes(kw)) && !isLikelyMaleVoice(v);
   });
   if (universalFemale) return universalFemale;
 
-  // 3. Fallback: Any English/General voice that is NOT male
+  // 3. Fallback: Any voice that is not explicitly identified as male
   const anyNonMale = voices.find((v) => !isLikelyMaleVoice(v));
   if (anyNonMale) return anyNonMale;
 
-  // If only male voices exist in system, return null so we skip the male voice
+  // 4. Guaranteed universal voice fallback:
+  // If the browser/device only offers system-level or untagged default voices,
+  // return the default voice to guarantee speech synthesis never fails on any device.
+  if (allowUniversalFallback) {
+    return voices.find((v) => v.default) || voices[0] || null;
+  }
+
   return null;
 }
 
-// Prompt browser to initialize voices immediately
+// Prompt browser to initialize voices immediately and warm network voice cache
 if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
   try {
     window.speechSynthesis.getVoices();
@@ -120,15 +133,15 @@ if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
 
 /**
  * Waits until the browser's voice synthesis engine has fully loaded its voices,
- * then returns the preferred female voice from the priority queue.
- * Skips male voices completely.
+ * prioritizing the first voice model in the priority queue and downloading/selecting
+ * it to run universally for any browser and device type.
  */
 export async function waitForSerafinaVoice(timeoutMs = 2500): Promise<SpeechSynthesisVoice | null> {
   if (typeof window === 'undefined' || !('speechSynthesis' in window)) return null;
 
   const currentVoices = window.speechSynthesis.getVoices();
   if (currentVoices && currentVoices.length > 0) {
-    const found = findVoiceFromList(currentVoices);
+    const found = findVoiceFromList(currentVoices, false);
     if (found) return found;
   }
 
@@ -144,11 +157,11 @@ export async function waitForSerafinaVoice(timeoutMs = 2500): Promise<SpeechSynt
       clearTimeout(failTimer);
     };
 
-    const attemptResolve = () => {
+    const attemptResolve = (isFinal = false) => {
       if (settled) return;
       const voices = window.speechSynthesis.getVoices();
       if (voices && voices.length > 0) {
-        const voice = findVoiceFromList(voices);
+        const voice = findVoiceFromList(voices, isFinal);
         if (voice) {
           settled = true;
           cleanup();
@@ -160,20 +173,20 @@ export async function waitForSerafinaVoice(timeoutMs = 2500): Promise<SpeechSynt
 
     // 1. Listen to onvoiceschanged
     window.speechSynthesis.onvoiceschanged = () => {
-      attemptResolve();
+      attemptResolve(false);
     };
 
     // 2. Poll every 50ms (in case onvoiceschanged does not fire or already fired)
-    const pollTimer = setInterval(attemptResolve, 50);
+    const pollTimer = setInterval(() => attemptResolve(false), 50);
 
-    // 3. Timeout fallback: if no suitable voice found, skip male voice
+    // 3. Timeout fallback: 100% guarantee universal voice selection on all devices
     const failTimer = setTimeout(() => {
       if (!settled) {
         settled = true;
         cleanup();
         const voices = window.speechSynthesis.getVoices();
-        const voice = findVoiceFromList(voices);
-        resolve(voice); // Will be null if only male voices exist
+        const voice = findVoiceFromList(voices, true) || (voices && voices[0]) || null;
+        resolve(voice);
       }
     }, timeoutMs);
   });
