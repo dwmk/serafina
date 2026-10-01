@@ -47,7 +47,7 @@ export async function loadModelPipeline(
   onProgress?: (prog: DownloadProgress) => void
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): Promise<any> {
-  if (model.family === 'cloud' || model.family === 'ollama') {
+  if (model.family === 'ollama') {
     return { cloud: true };
   }
 
@@ -207,78 +207,6 @@ export async function streamSerafinaResponse({
   let accumulatedText = '';
   abortController = new AbortController();
 
-  // If Cloud Model (Gemini 3.8 Flash)
-  if (model.family === 'cloud') {
-    const systemPrompt = getPersonaPrompt(false);
-    const messagesPayload = [
-      ...history.slice(-8).map((m) => ({ role: m.role, content: m.content })),
-      { role: 'user', content: userMessage },
-    ];
-
-    const response = await fetch('/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        messages: messagesPayload,
-        systemPrompt,
-        maxTokens,
-      }),
-      signal: abortController.signal,
-    });
-
-    if (!response.ok) {
-      const errJson = await response.json().catch(() => ({}));
-      throw new Error(errJson.error || `Server error: ${response.statusText}`);
-    }
-
-    const reader = response.body?.getReader();
-    if (!reader) throw new Error('Response body stream not available');
-
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n\n');
-      buffer = lines.pop() || '';
-
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          try {
-            const data = JSON.parse(line.slice(6));
-            if (data.text) {
-              if (firstTokenTime === null) {
-                firstTokenTime = performance.now();
-              }
-              tokenCount++;
-              accumulatedText += data.text;
-              onToken(data.text, cleanSerafinaResponse(accumulatedText));
-
-              const now = performance.now();
-              const elapsedSec = (now - startTime) / 1000;
-              const tps = elapsedSec > 0 ? Math.round((tokenCount / elapsedSec) * 10) / 10 : 0;
-              onTelemetry?.({
-                ttftMs: Math.round(firstTokenTime - startTime),
-                tokensPerSec: tps,
-                totalMs: Math.round(now - startTime),
-                tokenCount,
-                device: 'cloud',
-              });
-            }
-          } catch {
-            // Ignore parse errors on SSE boundary
-          }
-        }
-      }
-    }
-
-    const cleanedFinal = cleanSerafinaResponse(accumulatedText);
-    return cleanedFinal;
-  }
-
   // If Cloud Ollama Model (MuxAI + Ollama or Self-hosted Ollama)
   if (model.family === 'ollama') {
     const endpointUrl = model.isCustomOllama
@@ -329,7 +257,7 @@ export async function streamSerafinaResponse({
       }
       tokenCount++;
       accumulatedText += piece;
-      onToken(piece, cleanSerafinaResponse(accumulatedText));
+      onToken(piece, cleanSerafinaResponse(accumulatedText, model.isSmallModel));
 
       const now = performance.now();
       const elapsedSec = (now - startTime) / 1000;
@@ -361,7 +289,7 @@ export async function streamSerafinaResponse({
     }
   }
 
-  const finalResult = cleanSerafinaResponse(accumulatedText);
+  const finalResult = cleanSerafinaResponse(accumulatedText, model.isSmallModel);
   return finalResult;
 }
 

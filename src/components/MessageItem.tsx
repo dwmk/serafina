@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Copy, Check, RotateCcw, Volume2, CheckCheck, Pencil } from 'lucide-react';
 import { Message } from '../types';
 import { AI_PROFILE } from '../constants';
+import { MarkdownRenderer } from './MarkdownRenderer';
 
 interface MessageItemProps {
   message: Message;
@@ -163,10 +164,18 @@ export const MessageItem: React.FC<MessageItemProps> = ({
                 : 'bg-white text-neutral-800 dark:bg-[#1c1f2e] dark:text-neutral-100 rounded-tl-sm border border-black/[0.08] dark:border-white/[0.08] shadow-xs'
             }`}
           >
-            {/* Text Content with highlighted search matches */}
-            <div className="whitespace-pre-wrap break-words">
-              {renderHighlightedContent(message.content)}
-            </div>
+            {/* Text Content: Markdown & LaTeX for AI responses, highlighted plain text for user */}
+            {isUser ? (
+              <div className="whitespace-pre-wrap break-words">
+                {renderHighlightedContent(message.content)}
+              </div>
+            ) : (
+              <MarkdownRenderer
+                content={message.content}
+                searchQuery={searchQuery}
+                isCurrentSearchMatch={isCurrentSearchMatch}
+              />
+            )}
 
             {/* User Delivery tick & Timestamp inside bubble */}
             {isUser && (

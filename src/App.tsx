@@ -156,27 +156,36 @@ export default function App() {
       // Wait until voice synthesis engine is fully ready/loaded so the female voice queue is activated
       const voice = await waitForSerafinaVoice(2000);
 
-      // Skip male voice if no female voice is loaded/ready
-      if (!voice) {
-        console.warn('No female voice available from queue, skipping voice synthesis.');
-        return;
-      }
+      const availableVoices = window.speechSynthesis.getVoices();
+      const guaranteedVoice = voice || (availableVoices && availableVoices[0]) || null;
 
       // Check if user disabled sound while waiting
       if (!isSoundActive) return;
 
-      setCurrentlySpeakingMsgId(msgId);
-      lipSyncManager.startSpeech(text);
+      // Format spoken text to remove code syntax and raw LaTeX delimiters for natural voice playback
+      const spokenText = text
+        .replace(/```[\s\S]*?```/g, 'here is the code.')
+        .replace(/\$\$[\s\S]*?\$\$/g, 'the mathematical expression.')
+        .replace(/\$([^$]+)\$/g, '$1')
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+        .replace(/[*_]{1,3}([^*_]+)[*_]{1,3}/g, '$1')
+        .replace(/^#{1,6}\s+/gm, '')
+        .trim() || text;
 
-      const utterance = new SpeechSynthesisUtterance(text);
+      setCurrentlySpeakingMsgId(msgId);
+      lipSyncManager.startSpeech(spokenText);
+
+      const utterance = new SpeechSynthesisUtterance(spokenText);
       utterance.pitch = VOICE_CONFIG.pitch;
       utterance.rate = VOICE_CONFIG.rate;
-      utterance.voice = voice;
+      if (guaranteedVoice) {
+        utterance.voice = guaranteedVoice;
+      }
 
       utterance.onboundary = (event) => {
         const charIndex = event.charIndex || 0;
         const charLength = event.charLength || 5;
-        const word = text.slice(charIndex, charIndex + charLength);
+        const word = spokenText.slice(charIndex, charIndex + charLength);
         lipSyncManager.onBoundary(word);
       };
 
@@ -189,6 +198,9 @@ export default function App() {
         lipSyncManager.endSpeech();
       };
 
+      if (window.speechSynthesis.paused) {
+        window.speechSynthesis.resume();
+      }
       window.speechSynthesis.speak(utterance);
     },
     [isSoundActive]
@@ -747,7 +759,7 @@ export default function App() {
         role: 'assistant',
         content: isOllama
           ? `Connection to ${activeModel.name} was interrupted. I have automatically switched to local SmolLM2 135M.`
-          : "My memory stalled loading those weights into your browser. If your device is low on RAM, try SmolLM2 135M.",
+          : "Something went wrong. (Try switching to SmolLM2 135M)",
         timestamp: Date.now(),
         modelUsed: activeModel.name,
         error: true,

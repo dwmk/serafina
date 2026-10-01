@@ -16,16 +16,18 @@ export function getPersonaPrompt(isSmallModel: boolean): string {
 /**
  * Filter and post-process response to ensure no asterisks or leaked system instructions slip through.
  */
-export function cleanSerafinaResponse(rawText: string): string {
+export function cleanSerafinaResponse(rawText: string, isSmallModel: boolean = false): string {
   if (!rawText) return '';
   let cleaned = rawText;
 
   // Strip accidental assistant tags or role indicators often outputted by SLMs
   cleaned = cleaned.replace(/^(assistant|model|seraphina|serafina):\s*/i, '');
   
-  // Remove markdown action roleplay tags (*smiles*, *leans back*, (chuckles), etc.)
-  cleaned = cleaned.replace(/\*[^*]*\*/g, '');
-  cleaned = cleaned.replace(/\([^)]*\)/g, '');
+  // For small models, avoid roleplay action asterisks (*smiles*) at the very start of a line
+  // while preserving Markdown formatting (**bold**, *italic*), LaTeX equations, parentheses, and code blocks
+  if (isSmallModel) {
+    cleaned = cleaned.replace(/^\*[A-Za-z\s,.'"-]{1,50}\*\s*/, '');
+  }
 
   // Trim extra spaces and leading/trailing blank lines
   cleaned = cleaned.trim();
