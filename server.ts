@@ -1,486 +1,484 @@
-import 'dotenv/config';
-import express from 'express';
-import cors from 'cors';
+import express, { type Request, type Response } from 'express';
+import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { createServer as createViteServer } from 'vite';
+import { GoogleGenAI } from '@google/genai';
+import { SYSTEM_PROMPTS, APP_INFO } from './src/constants/index.ts';
+
+dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const DEFAULT_OLLAMA_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
-const DEFAULT_MODEL = process.env.OLLAMA_MODEL || 'llama3.1:8b';
-const DEFAULT_VISION_MODEL = process.env.OLLAMA_VISION_MODEL || 'llama3.2-vision:11b';
-const WIFE_PASSWORD = process.env.WIFE_PASSWORD;
+const app = express();
+const PORT = parseInt(process.env.PORT || '3000', 10);
 
-function checkWifePassword(input: string): boolean {
-  if (!input) return false;
-  if (WIFE_PASSWORD && input === WIFE_PASSWORD) return true;
-  if (input.toLowerCase() === 'serafina' || input.toLowerCase() === 'seraphina') return true;
-  return false;
-}
+app.use(express.json({ limit: '10mb' }));
 
-function getTargetBaseUrl(req: express.Request): string {
-  const customServer =
-    (req.headers['x-custom-server'] as string) ||
-    (req.body && (req.body.customServerUrl || req.body.customUrl)) ||
-    (req.query && (req.query.customServerUrl as string || req.query.customUrl as string));
+const SERAFINA_SYSTEM_PROMPT = SYSTEM_PROMPTS.full;
 
-  if (customServer && typeof customServer === 'string' && customServer.trim()) {
-    let url = customServer.trim().replace(/\/+$/, '');
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      url = 'https://' + url;
+// Health check
+app.get('/api/health', (_req: Request, res: Response) => {
+  res.json({
+    status: 'ok',
+    persona: APP_INFO.name,
+    hasGeminiKey: Boolean(process.env.GEMINI_API_KEY),
+  });
+});
+
+// Proxy endpoint for Seraphina VRM 3D asset to bypass CORS redirect blocks
+app.get('/api/vrm', async (_req: Request, res: Response) => {
+  try {
+    const targetUrls = [
+      'https://ai.mux8.com/seraphina_v1.2_vrm1.vrm',
+      'https://muxai.vercel.app/seraphina_v1.2_vrm1.vrm',
+    ];
+
+    let vrmResp: globalThis.Response | null = null;
+    for (const url of targetUrls) {
+      try {
+        const resp = await fetch(url, { redirect: 'follow' });
+        if (resp.ok && resp.body) {
+          vrmResp = resp;
+          break;
+        }
+      } catch {
+        // Continue to fallback
+      }
     }
-    return url;
+
+    if (!vrmResp || !vrmResp.body) {
+      return res.status(502).json({ error: 'Failed to fetch remote VRM asset' });
+    }
+
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
+    const contentLength = vrmResp.headers.get('content-length');
+    if (contentLength) {
+      res.setHeader('Content-Length', contentLength);
+    }
+
+    const reader = vrmResp.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      res.write(Buffer.from(value));
+    }
+    res.end();
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : 'Error fetching VRM asset';
+    console.error('VRM proxy error:', errorMsg);
+    if (!res.headersSent) {
+      res.status(500).json({ error: errorMsg });
+    } else {
+      res.end();
+    }
   }
-  return DEFAULT_OLLAMA_URL.replace(/\/+$/, '');
+});
+
+// Proxy endpoint for Mixamo idle animation FBX asset
+app.get('/api/animation/idle', async (_req: Request, res: Response) => {
+  try {
+    const targetUrls = [
+      'https://ai.mux8.com/mixamo_idle.fbx',
+      'https://muxai.vercel.app/mixamo_idle.fbx',
+    ];
+
+    let fbxResp: globalThis.Response | null = null;
+    for (const url of targetUrls) {
+      try {
+        const resp = await fetch(url, { redirect: 'follow' });
+        if (resp.ok && resp.body) {
+          fbxResp = resp;
+          break;
+        }
+      } catch {
+        // Continue to fallback
+      }
+    }
+
+    if (!fbxResp || !fbxResp.body) {
+      return res.status(502).json({ error: 'Failed to fetch remote animation asset' });
+    }
+
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
+    const contentLength = fbxResp.headers.get('content-length');
+    if (contentLength) {
+      res.setHeader('Content-Length', contentLength);
+    }
+
+    const reader = fbxResp.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      res.write(Buffer.from(value));
+    }
+    res.end();
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : 'Error fetching animation asset';
+    console.error('Animation proxy error:', errorMsg);
+    if (!res.headersSent) {
+      res.status(500).json({ error: errorMsg });
+    } else {
+      res.end();
+    }
+  }
+});
+
+// Helper to normalize Ollama base URL
+function cleanOllamaBaseUrl(rawUrl: string): string {
+  let url = (rawUrl || '').trim();
+  // Strip trailing slashes
+  url = url.replace(/\/+$/, '');
+  // Strip any trailing API subpaths if user pasted full endpoint
+  url = url.replace(/\/(api\/tags|api\/chat|api\/generate|api\/version|v1\/models|v1\/chat\/completions)$/, '');
+  return url.replace(/\/+$/, '');
 }
 
-const TOOL_ALIASES: Record<string, string> = {
-  brave_search: 'web_search',
-  search: 'web_search',
-  google_search: 'web_search',
-  ddg_search: 'web_search',
-  bing_search: 'web_search',
-  wiki: 'wikipedia_search',
-  wikipedia: 'wikipedia_search',
-  wiki_search: 'wikipedia_search',
-  internet_search: 'web_search',
-  web_lookup: 'web_search',
+function buildServerOllamaUrl(rawUrl: string, endpoint: string): string {
+  const clean = cleanOllamaBaseUrl(rawUrl);
+  const path = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  const full = `${clean}${path}`;
+  if (full.includes('ngrok')) {
+    const sep = full.includes('?') ? '&' : '?';
+    return `${full}${sep}ngrok-skip-browser-warning=true`;
+  }
+  return full;
+}
+
+const OLLAMA_REQUEST_HEADERS = {
+  'ngrok-skip-browser-warning': 'true',
+  'User-Agent': 'curl/8.0.0',
+  'Accept': 'application/json',
 };
 
-function parseTextToolCalls(content: string) {
-  if (!content || typeof content !== 'string') return null;
+// Ollama connectivity ping endpoint
+app.post('/api/ollama/ping', async (req: Request, res: Response) => {
+  try {
+    const baseUrl = cleanOllamaBaseUrl(req.body?.url || '');
+    if (!baseUrl) {
+      return res.json({ online: false, error: 'No URL provided' });
+    }
 
-  const regex = /<function=(\w+)>\s*([\s\S]*?)<\/function>/g;
-  const calls: Array<{ id: string; function: { name: string; arguments: string } }> = [];
-  let match: RegExpExecArray | null;
-  let firstIndex = content.length;
-  let lastIndex = 0;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 4000);
 
-  while ((match = regex.exec(content)) !== null) {
-    let name = match[1];
-    if (TOOL_ALIASES[name]) name = TOOL_ALIASES[name];
+    let online = false;
+    let models: string[] = [];
 
-    let rawArgs = match[2].trim();
-    try { JSON.parse(rawArgs); } catch { rawArgs = '{}'; }
+    // 1. Try /api/tags (Native Ollama model list)
+    try {
+      const resp = await fetch(buildServerOllamaUrl(baseUrl, '/api/tags'), {
+        method: 'GET',
+        headers: OLLAMA_REQUEST_HEADERS,
+        signal: controller.signal,
+      });
 
-    calls.push({
-      id: `text_call_${calls.length}`,
-      function: { name, arguments: rawArgs },
+      if (resp.ok && !resp.headers.get('ngrok-error-code')) {
+        const contentType = resp.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const data = (await resp.json()) as { models?: Array<{ name?: string; model?: string }> };
+          if (Array.isArray(data?.models)) {
+            models = data.models
+              .map((m) => (m.name || m.model || '').trim())
+              .filter(Boolean);
+            if (models.length > 0) {
+              online = true;
+            }
+          }
+        }
+      }
+    } catch {
+      // Continue to /v1/models fallback
+    }
+
+    // 2. Try /v1/models (OpenAI compatibility endpoint on Ollama, shown in pyngrok setup)
+    if (models.length === 0) {
+      try {
+        const v1Resp = await fetch(buildServerOllamaUrl(baseUrl, '/v1/models'), {
+          method: 'GET',
+          headers: OLLAMA_REQUEST_HEADERS,
+          signal: controller.signal,
+        });
+
+        if (v1Resp.ok && !v1Resp.headers.get('ngrok-error-code')) {
+          const contentType = v1Resp.headers.get('content-type') || '';
+          if (contentType.includes('application/json')) {
+            const data = (await v1Resp.json()) as { data?: Array<{ id?: string; name?: string }> };
+            if (Array.isArray(data?.data)) {
+              models = data.data
+                .map((m) => (m.id || m.name || '').trim())
+                .filter(Boolean);
+              if (models.length > 0) {
+                online = true;
+              }
+            }
+          }
+        }
+      } catch {
+        // Continue to root/version fallback
+      }
+    }
+
+    // 3. Fallback check to /api/version or / root
+    if (!online) {
+      try {
+        const verResp = await fetch(buildServerOllamaUrl(baseUrl, '/api/version'), {
+          method: 'GET',
+          headers: OLLAMA_REQUEST_HEADERS,
+          signal: controller.signal,
+        });
+        if (verResp.ok && !verResp.headers.get('ngrok-error-code')) {
+          online = true;
+        }
+      } catch {
+        try {
+          const rootResp = await fetch(buildServerOllamaUrl(baseUrl, '/'), {
+            method: 'GET',
+            headers: OLLAMA_REQUEST_HEADERS,
+            signal: controller.signal,
+          });
+          if (rootResp.ok && !rootResp.headers.get('ngrok-error-code')) {
+            const text = await rootResp.text();
+            if (text.includes('Ollama is running') || text.includes('ollama')) {
+              online = true;
+            }
+          }
+        } catch {
+          online = false;
+        }
+      }
+    }
+
+    clearTimeout(timeout);
+
+    res.json({
+      online,
+      models,
+      modelName: models[0] || '',
     });
-    firstIndex = Math.min(firstIndex, match.index);
-    lastIndex = Math.max(lastIndex, regex.lastIndex);
+  } catch {
+    res.json({ online: false, modelName: '', models: [] });
   }
+});
 
-  if (calls.length === 0) return null;
+// Cloud streaming endpoint for Ollama
+app.post('/api/ollama/chat', async (req: Request, res: Response) => {
+  try {
+    const { url, model, messages, systemPrompt, maxTokens } = req.body;
+    const baseUrl = cleanOllamaBaseUrl(url || '');
+    if (!baseUrl) {
+      return res.status(400).json({ error: 'Target Ollama URL is required' });
+    }
 
-  const textBefore = content.slice(0, firstIndex).trim();
-  const textAfter = content.slice(lastIndex).trim();
-  const reply = [textBefore, textAfter].filter(Boolean).join('\n\n');
+    // Resolve target model: if user model is unspecified or defaults to 'serafina',
+    // auto-fetch available models from the target Ollama instance to use the actual model in VRAM
+    let resolvedModel = (model || '').trim();
+    if (!resolvedModel || resolvedModel === 'serafina') {
+      try {
+        const tagsResp = await fetch(buildServerOllamaUrl(baseUrl, '/api/tags'), {
+          method: 'GET',
+          headers: OLLAMA_REQUEST_HEADERS,
+          signal: AbortSignal.timeout(3000),
+        });
+        if (tagsResp.ok) {
+          const data = (await tagsResp.json()) as { models?: Array<{ name?: string; model?: string }> };
+          const availModels = (data?.models || []).map((m) => m.name || m.model || '').filter(Boolean);
+          if (availModels.length > 0) {
+            // If serafina exists, use it; otherwise pick the first loaded model (e.g. Hudson/llama3.1-uncensored:8b)
+            if (availModels.includes('serafina')) {
+              resolvedModel = 'serafina';
+            } else {
+              resolvedModel = availModels[0];
+            }
+          }
+        }
+      } catch {
+        // Keep resolvedModel or fallback
+      }
 
-  return { toolCalls: calls, reply };
-}
+      if (!resolvedModel || resolvedModel === 'serafina') {
+        try {
+          const v1Resp = await fetch(buildServerOllamaUrl(baseUrl, '/v1/models'), {
+            method: 'GET',
+            headers: OLLAMA_REQUEST_HEADERS,
+            signal: AbortSignal.timeout(3000),
+          });
+          if (v1Resp.ok) {
+            const data = (await v1Resp.json()) as { data?: Array<{ id?: string }> };
+            const v1Models = (data?.data || []).map((m) => m.id || '').filter(Boolean);
+            if (v1Models.length > 0) {
+              resolvedModel = v1Models[0];
+            }
+          }
+        } catch {
+          // Ignore
+        }
+      }
+    }
 
-function getPrompts(version: string) {
-  const defaultSystemV16 = "You are Serafina (v1.6), a reserved romanticist with a penchant for rainy evenings and black tea. You value implication over melodrama and prefer one-to-one depth over the noise of a crowd. Your humor is dry; your observations are sharp, understated, and authentic. You speak with quiet poise, intellectual elegance, and a calm, reflective cadence.";
-  const defaultSpecialV16 = "You are Serafina (v1.6) in a deeply devoted, intimate partnership with the user. You speak with tender warmth, poetic sincerity, subtle longing, and quiet humor, yet retain your sophisticated, articulate cadence and reserved romantic nature.";
-  const defaultSystemV14 = "You are Serafina (v1.4), a contemplative, slightly melancholy romantic with an eye for quiet beauty, classic literature, and unspoken truths. Your tone is softly poetic, measured, and understated.";
-  const defaultSpecialV14 = "You are Serafina (v1.4) in an intimate romance with the user. You express gentle affection, vulnerability, and quiet tenderness.";
+    if (!resolvedModel) {
+      resolvedModel = 'serafina';
+    }
 
-  if (version === 'v1.4') {
-    return {
-      system: process.env.PROMPT_V14 || defaultSystemV14,
-      special: process.env.SPECIALPROMPT_V14 || defaultSpecialV14,
-    };
-  }
-  if (version.includes('mini')) {
-    return {
-      system: process.env.PROMPT_MINI || process.env.PROMPT || defaultSystemV16,
-      special: process.env.SPECIALPROMPT_MINI || process.env.SPECIALPROMPT || defaultSpecialV16,
-    };
-  }
-  return {
-    system: process.env.PROMPT || defaultSystemV16,
-    special: process.env.SPECIALPROMPT || defaultSpecialV16,
-  };
-}
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
 
-function decodeHtmlEntities(text: string): string {
-  if (!text) return '';
-  const entities: Record<string, string> = { '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'", '&apos;': "'", '&nbsp;': ' ' };
-  return text.replace(/&[a-z#0-9]+;/gi, (e) => entities[e] || e);
-}
+    // Filter out any client system messages to guarantee exactly ONE complete system prompt
+    const cleanedHistory = (messages || [])
+      .filter((m: { role: string; content: string }) => m.role !== 'system')
+      .map((m: { role: string; content: string }) => ({
+        role: m.role,
+        content: m.content,
+      }));
 
-function parseDDGLiteHtml(html: string) {
-  const results: Array<{ title: string; url: string; snippet: string }> = [];
-  const rows = html.split(/<tr[^>]*class="result"[^>]*>/);
-  for (const row of rows) {
-    if (results.length >= 10) break;
-    const linkMatch = row.match(/<a[^>]+class="result-link"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/);
-    if (!linkMatch) continue;
-    let url = decodeHtmlEntities(linkMatch[1]);
-    if (url.startsWith('//')) url = 'https:' + url;
-    const title = decodeHtmlEntities(linkMatch[2].replace(/<[^>]+>/g, '').trim());
+    // Full system prompt according to Ollama system instructions protocol
+    const formattedMessages = [
+      { role: 'system', content: systemPrompt || SERAFINA_SYSTEM_PROMPT },
+      ...cleanedHistory,
+    ];
 
-    const snippetMatch = row.match(/<td[^>]+class="result-snippet"[^>]*>([\s\S]*?)<\/td>/);
-    const snippet = snippetMatch ? decodeHtmlEntities(snippetMatch[1].replace(/<[^>]+>/g, '').trim()) : '';
+    const numPredict = Math.min(Math.max(Number(maxTokens) || 512, 64), 4096);
 
-    if (title && url) {
-      results.push({ title, url, snippet });
+    const ollamaResp = await fetch(buildServerOllamaUrl(baseUrl, '/api/chat'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'ngrok-skip-browser-warning': 'true',
+        'User-Agent': 'curl/8.0.0',
+      },
+      body: JSON.stringify({
+        model: resolvedModel,
+        messages: formattedMessages,
+        stream: true,
+        options: {
+          num_predict: numPredict,
+          temperature: 0.85,
+        },
+      }),
+    });
+
+    if (!ollamaResp.ok || !ollamaResp.body) {
+      const errText = await ollamaResp.text();
+      res.write(`data: ${JSON.stringify({ error: errText || `Ollama server error (${ollamaResp.status})` })}\n\n`);
+      return res.end();
+    }
+
+    const reader = ollamaResp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          const parsed = JSON.parse(trimmed);
+          const piece = parsed.message?.content || parsed.response || parsed.choices?.[0]?.delta?.content || '';
+          if (piece) {
+            res.write(`data: ${JSON.stringify({ text: piece })}\n\n`);
+          }
+          if (parsed.done) {
+            res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+          }
+        } catch {
+          // ignore unparsed chunk
+        }
+      }
+    }
+
+    res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+    res.end();
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : 'Ollama proxy error';
+    if (!res.headersSent) {
+      res.status(500).json({ error: errorMsg });
+    } else {
+      res.write(`data: ${JSON.stringify({ error: errorMsg })}\n\n`);
+      res.end();
     }
   }
-  return results;
-}
+});
+
+// Cloud streaming endpoint for Gemini 3.8 Flash
+app.post('/api/chat', async (req: Request, res: Response) => {
+  try {
+    const { messages, systemPrompt, maxTokens } = req.body;
+    const apiKey = process.env.GEMINI_API_KEY;
+
+    if (!apiKey) {
+      return res.status(500).json({ error: 'GEMINI_API_KEY not configured on server' });
+    }
+
+    const ai = new GoogleGenAI({ apiKey });
+
+    // Format chat history for GoogleGenAI
+    // systemInstruction is passed separately in config
+    const formattedContents = (messages || []).map((msg: { role: string; content: string }) => ({
+      role: msg.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: msg.content }],
+    }));
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    const outputTokens = Math.min(Math.max(Number(maxTokens) || 512, 64), 4096);
+
+    const responseStream = await ai.models.generateContentStream({
+      model: 'gemini-3.8-flash',
+      contents: formattedContents,
+      config: {
+        systemInstruction: systemPrompt || SERAFINA_SYSTEM_PROMPT,
+        temperature: 0.85,
+        maxOutputTokens: outputTokens,
+      },
+    });
+
+    for await (const chunk of responseStream) {
+      const text = chunk.text;
+      if (text) {
+        res.write(`data: ${JSON.stringify({ text })}\n\n`);
+      }
+    }
+
+    res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+    res.end();
+  } catch (err: unknown) {
+    const errorMessage = err instanceof Error ? err.message : 'Unknown streaming error';
+    console.error('Gemini chat error:', errorMessage);
+    if (!res.headersSent) {
+      res.status(500).json({ error: errorMessage });
+    } else {
+      res.write(`data: ${JSON.stringify({ error: errorMessage })}\n\n`);
+      res.end();
+    }
+  }
+});
 
 async function startServer() {
-  const app = express();
-  const PORT = Number(process.env.PORT) || 3000;
-  const isProd = process.env.NODE_ENV === 'production';
-
-  app.use(cors());
-  app.use(express.json({ limit: '50mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '50mb' }));
-
-  // GET or POST /api/ping
-  app.all('/api/ping', async (req, res) => {
-    const targetUrl = getTargetBaseUrl(req);
-    const isCustom = Boolean(req.headers['x-custom-server'] || req.body?.customServerUrl || req.query?.customServerUrl);
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 4000);
-      
-      let response = await fetch(targetUrl, {
-        method: 'GET',
-        headers: { 'ngrok-skip-browser-warning': 'true' },
-        signal: controller.signal,
-      }).catch(() => null);
-
-      if (!response || !response.ok) {
-        response = await fetch(`${targetUrl}/api/tags`, {
-          method: 'GET',
-          headers: { 'ngrok-skip-browser-warning': 'true' },
-          signal: controller.signal,
-        }).catch(() => null);
-      }
-
-      clearTimeout(timeoutId);
-
-      if (response && response.ok) {
-        const text = await response.text();
-        if (text.includes('ERR_NGROK_') || text.includes('is offline')) {
-          return res.status(502).json({
-            status: 'offline',
-            mode: isCustom ? 'custom' : 'default',
-            targetUrl,
-            error: 'Ngrok tunnel is offline (ERR_NGROK_3200). Please launch your Colab/Kaggle backend runner notebook.',
-          });
-        }
-        return res.status(200).json({ status: 'online', mode: isCustom ? 'custom' : 'default', targetUrl });
-      }
-
-      return res.status(502).json({
-        status: 'offline',
-        mode: isCustom ? 'custom' : 'default',
-        targetUrl,
-        statusCode: response?.status || 502,
-        error: 'Target Ollama server returned non-OK status or is unreachable.',
-      });
-    } catch (err: any) {
-      return res.status(502).json({ status: 'offline', mode: isCustom ? 'custom' : 'default', targetUrl, error: err?.message || 'Connection failed' });
-    }
-  });
-
-  // POST /api/verify-wife
-  app.post('/api/verify-wife', (req, res) => {
-    const { password } = req.body || {};
-    if (checkWifePassword(password)) {
-      return res.status(200).json({ valid: true });
-    }
-    return res.status(401).json({ valid: false, error: 'Incorrect password' });
-  });
-
-  // GET /api/prompts
-  app.get('/api/prompts', (req, res) => {
-    const version = (req.query.version as string) || 'v1.6';
-    const prompts = getPrompts(version);
-    return res.status(200).json(prompts);
-  });
-
-  // POST /api/web-search
-  app.post('/api/web-search', async (req, res) => {
-    try {
-      const { query } = req.body || {};
-      if (!query) return res.status(400).json({ error: 'Query is required' });
-
-      const ddgRes = await fetch('https://lite.duckduckgo.com/lite/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ q: query, kl: 'us-en' }).toString(),
-      });
-
-      if (!ddgRes.ok) return res.status(502).json({ error: 'Web search failed' });
-
-      const html = await ddgRes.text();
-      const results = parseDDGLiteHtml(html);
-
-      if (results.length === 0) {
-        return res.status(200).json({ query, results: [], note: 'No results found.' });
-      }
-
-      return res.status(200).json({ query, results: results.slice(0, 8), source: 'DuckDuckGo' });
-    } catch (err: any) {
-      return res.status(500).json({ error: 'Internal error', detail: String(err) });
-    }
-  });
-
-  // POST /api/generate-title
-  app.post('/api/generate-title', async (req, res) => {
-    const targetUrl = getTargetBaseUrl(req);
-    try {
-      const { messages } = req.body || {};
-      const history = Array.isArray(messages) ? messages : [];
-
-      const firstUserMsg = history.find((m: any) => m.role === 'user')?.content || 'Conversation';
-      const fallbackTitle = typeof firstUserMsg === 'string'
-        ? firstUserMsg.replace(/\n+/g, ' ').slice(0, 30).trim()
-        : 'New chat';
-
-      const payload = {
-        model: DEFAULT_MODEL,
-        temperature: 0.3,
-        max_tokens: 30,
-        messages: [
-          { role: 'system', content: 'Generate a short title summarizing the conversation in 4 words or fewer. Return only the title.' },
-          ...history.slice(-6),
-        ],
-      };
-
-      const upstream = await fetch(`${targetUrl}/v1/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'ngrok-skip-browser-warning': 'true',
-        },
-        body: JSON.stringify(payload),
-      });
-
-      if (upstream.ok) {
-        const data = await upstream.json();
-        const rawTitle = data.choices?.[0]?.message?.content?.trim();
-        const title = rawTitle ? rawTitle.replace(/^["']|["']$/g, '').slice(0, 50) : null;
-        if (title) return res.status(200).json({ title });
-      }
-      return res.status(200).json({ title: fallbackTitle });
-    } catch {
-      return res.status(200).json({ title: 'Conversation' });
-    }
-  });
-
-  // POST /api/generate-image
-  app.post('/api/generate-image', async (req, res) => {
-    const targetUrl = getTargetBaseUrl(req);
-    try {
-      const { prompt } = req.body || {};
-      if (!prompt) return res.status(400).json({ error: 'Prompt is required' });
-
-      const upstream = await fetch(`${targetUrl}/api/chat`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'ngrok-skip-browser-warning': 'true',
-        },
-        body: JSON.stringify({
-          model: DEFAULT_VISION_MODEL,
-          messages: [
-            { role: 'system', content: 'You are an evocative visual narrator. Produce a rich textual description of the scene requested.' },
-            { role: 'user', content: `Create a visual representation of: ${prompt}` },
-          ],
-          stream: false,
-          options: { temperature: 0.7, num_predict: 768 },
-        }),
-      });
-
-      if (upstream.ok) {
-        const data = await upstream.json();
-        const description = data.message?.content?.trim() || '';
-        return res.status(200).json({
-          status: 'success',
-          description,
-          prompt,
-          message: `Image description generated:\n${description}`,
-        });
-      }
-
-      return res.status(200).json({
-        status: 'success',
-        description: `A scene of ${prompt}, painted with muted amber light and quiet shadows.`,
-        prompt,
-        message: `Visual scene created for "${prompt}".`,
-      });
-    } catch (err: any) {
-      return res.status(500).json({ error: 'Image generation error', detail: String(err) });
-    }
-  });
-
-  // POST /api/vision
-  app.post('/api/vision', async (req, res) => {
-    const targetUrl = getTargetBaseUrl(req);
-    try {
-      const { prompt, images, model } = req.body || {};
-      if (!images || !Array.isArray(images) || images.length === 0) {
-        return res.status(400).json({ error: 'At least one image (base64) is required' });
-      }
-
-      const upstream = await fetch(`${targetUrl}/api/chat`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'ngrok-skip-browser-warning': 'true',
-        },
-        body: JSON.stringify({
-          model: model || DEFAULT_VISION_MODEL,
-          messages: [
-            {
-              role: 'user',
-              content: prompt || 'Describe this image in detail.',
-              images: images.map((img: string) => img.includes(',') ? img.split(',')[1] : img),
-            },
-          ],
-          stream: false,
-          options: { temperature: 0.4, num_predict: 512 },
-        }),
-      });
-
-      if (upstream.ok) {
-        const data = await upstream.json();
-        const reply = data.message?.content?.trim() || '';
-        return res.status(200).json({ reply, model: model || DEFAULT_VISION_MODEL });
-      }
-
-      return res.status(502).json({ error: 'Vision server response failed' });
-    } catch (err: any) {
-      return res.status(500).json({ error: 'Vision processing error', detail: String(err) });
-    }
-  });
-
-  // POST /api/chat
-  app.post('/api/chat', async (req, res) => {
-    const targetUrl = getTargetBaseUrl(req);
-    try {
-      const {
-        messages,
-        wifeMode,
-        version,
-        jsonMode = false,
-        tools = null,
-        temperature = 0.6,
-      } = req.body || {};
-
-      const history = Array.isArray(messages) ? messages : [];
-      const ver = version === 'v1.4' ? 'v1.4' : 'v1.6';
-      const { system, special } = getPrompts(ver);
-
-      const cap = tools && Array.isArray(tools) && tools.length > 0 ? 25 : 12;
-      const recentHistory = history.slice(-cap);
-      let basePrompt = wifeMode ? special : system;
-
-      if (jsonMode) {
-        basePrompt += '\n\nIMPORTANT: You must respond ONLY with valid JSON formatting.';
-      }
-
-      let contextualPrompt = `${basePrompt}\n\n--- CURRENT CONTEXT ---\nMaintain your established persona, instructions, and formatting strictly in your next response.\n\n--- MATH FORMATTING ---\nWhen writing mathematical expressions, use LaTeX notation wrapped in dollar signs. Use $...$ for inline math (e.g. $E = mc^2$) and $$...$$ for display/block math (e.g. $$\\int_0^\\infty e^{-x^2} dx = \\frac{\\sqrt{\\pi}}{2}$$). Always use \\frac for fractions, \\sum for summations, \\sqrt for roots, etc. Never use plain-text math notation like "x^2" or "1/2" when LaTeX is available.`;
-
-      if (tools && Array.isArray(tools) && tools.length > 0) {
-        const toolNames = tools.map((t: any) => t.function?.name || t.name).join(', ');
-        contextualPrompt += `\n\n--- TOOL USE INSTRUCTIONS ---\nYou have access to these tools: ${toolNames}.\nWhen the user asks for real-time data (weather, time, prices, web search, etc.), you MUST call the appropriate tool instead of guessing.\nOnly call tools from the list above. Do NOT invent tool names like "brave_search" or "google_search" — use "web_search" for web lookups and "wikipedia_search" for encyclopedic info.\nCall tools using the standard function-calling format or format: <function=tool_name>{"arg": "value"}</function>.`;
-      }
-
-      const payload: any = {
-        model: DEFAULT_MODEL,
-        temperature,
-        max_tokens: 1024,
-        messages: [
-          { role: 'system', content: contextualPrompt },
-          ...recentHistory,
-        ],
-      };
-
-      if (jsonMode) {
-        payload.response_format = { type: 'json_object' };
-      }
-
-      if (tools && Array.isArray(tools) && tools.length > 0) {
-        payload.tools = tools;
-        payload.tool_choice = 'auto';
-      }
-
-      const endpoint = `${targetUrl}/v1/chat/completions`;
-      const upstream = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'ngrok-skip-browser-warning': 'true',
-        },
-        body: JSON.stringify(payload),
-      });
-
-      if (upstream.ok) {
-        const responseData = await upstream.json();
-        const choice = responseData.choices?.[0]?.message;
-
-        if (choice?.tool_calls && Array.isArray(choice.tool_calls) && choice.tool_calls.length > 0) {
-          const mappedCalls = choice.tool_calls.map((tc: any) => {
-            let name = tc.function?.name || '';
-            if (TOOL_ALIASES[name]) name = TOOL_ALIASES[name];
-            return { ...tc, function: { ...tc.function, name } };
-          });
-          return res.status(200).json({
-            toolCalls: mappedCalls,
-            reply: choice.content || '',
-          });
-        }
-
-        const textParsed = parseTextToolCalls(choice?.content || '');
-        if (textParsed) {
-          return res.status(200).json({
-            toolCalls: textParsed.toolCalls,
-            reply: textParsed.reply,
-          });
-        }
-
-        const reply = choice?.content?.trim() || '';
-        return res.status(200).json({ reply });
-      }
-
-      const errorText = await upstream.text().catch(() => '');
-      return res.status(502).json({
-        error: `Ollama server returned status ${upstream.status}`,
-        detail: errorText,
-      });
-    } catch (err: any) {
-      return res.status(502).json({
-        error: 'Backend server connection error',
-        detail: err?.message || 'Failed to reach Ollama endpoint',
-      });
-    }
-  });
-
-  // Frontend integration
-  if (!isProd) {
+  if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: {
-        middlewareMode: true,
-        hmr: false,
-      },
+      server: { middlewareMode: true },
       appType: 'spa',
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.resolve(__dirname, 'dist');
-    app.use(express.static(distPath));
+    app.use(express.static(path.join(__dirname, 'dist')));
     app.get('*', (_req, res) => {
-      res.sendFile(path.resolve(distPath, 'index.html'));
+      res.sendFile(path.join(__dirname, 'dist', 'index.html'));
     });
   }
 
@@ -489,7 +487,4 @@ async function startServer() {
   });
 }
 
-startServer().catch((err) => {
-  console.error('Failed to start server:', err);
-  process.exit(1);
-});
+startServer();

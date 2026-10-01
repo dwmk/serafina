@@ -1,149 +1,46 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
 
-:root {
-  --background: #fafafa;
-  --foreground: #18181b;
-}
-
-* {
-  box-sizing: border-box;
-}
-
-body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: 'Geist', 'Inter', system-ui, -apple-system, sans-serif;
-  margin: 0;
-  overflow: hidden;
+@layer base {
+  body {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    background-color: #f8f9fc;
+    color: #1e2029;
+  }
+  .dark body, html.dark body {
+    background-color: #0f1117;
+    color: #f1f2f6;
+  }
+  code, pre, .font-mono {
+    font-family: 'JetBrains Mono', monospace;
+  }
 }
 
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }
-
-::selection { background: var(--selection-bg); color: var(--selection-text); }
-
-@keyframes aurora-1 {
-  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
-  33% { transform: translate3d(80px, -50px, 0) scale(1.1); }
-  66% { transform: translate3d(-40px, 60px, 0) scale(0.95); }
+/* Custom sleek scrollbar for light theme */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
 }
-@keyframes aurora-2 {
-  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
-  33% { transform: translate3d(-60px, 40px, 0) scale(1.15); }
-  66% { transform: translate3d(50px, -30px, 0) scale(0.9); }
+::-webkit-scrollbar-track {
+  background: transparent;
 }
-@keyframes aurora-3 {
-  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
-  33% { transform: translate3d(40px, -60px, 0) scale(1.05); }
-  66% { transform: translate3d(-70px, 30px, 0) scale(1.1); }
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.12);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.22);
 }
 
-.animate-aurora-1,
-.animate-aurora-2,
-.animate-aurora-3 {
-  will-change: transform;
-  transform: translateZ(0);
-  backface-visibility: hidden;
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
 }
 
-.animate-aurora-1 { animation: aurora-1 20s ease-in-out infinite; }
-.animate-aurora-2 { animation: aurora-2 25s ease-in-out infinite; }
-.animate-aurora-3 { animation: aurora-3 22s ease-in-out infinite; }
-
-.katex-display {
-  overflow-x: auto;
-  overflow-y: hidden;
-  padding: 0.5rem 0;
-  margin: 0.5rem 0;
+/* Fast animation transitions */
+.fast-transition {
+  transition-duration: 120ms;
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
 }
-
-.katex {
-  font-size: 1.05em;
-}
-
-.katex-display::-webkit-scrollbar {
-  height: 4px;
-}
-.katex-display::-webkit-scrollbar-thumb {
-  background: rgba(128,128,128,0.3);
-  border-radius: 2px;
-}
-
-
-/* Theme-aware utility classes (driven by CSS custom properties from themes.js) */
-.themed-bg { background: var(--bg-base); }
-.themed-text { color: var(--text-base); }
-.themed-header { background: var(--header-bg); border-color: var(--header-border); }
-.themed-user-bubble { background: var(--user-bubble-bg); color: var(--user-bubble-text); }
-.themed-ai-bubble { background: var(--ai-bubble-bg); border-color: var(--ai-bubble-border); color: var(--ai-bubble-text); }
-.themed-ai-bubble:hover { background: var(--ai-bubble-hover-bg); border-color: var(--ai-bubble-hover-border); }
-.themed-logo-box { background: var(--logo-box-bg); border-color: var(--logo-box-border); }
-.themed-version-btn { background: var(--version-btn-bg); color: var(--version-btn-text); }
-.themed-version-btn:hover { background: var(--version-btn-hover-bg); }
-.themed-dropdown { background: var(--dropdown-bg); border-color: var(--dropdown-border); }
-.themed-version-active { background: var(--version-active-bg); color: var(--version-active-text); }
-.themed-version-inactive { color: var(--version-inactive-text); }
-.themed-version-inactive:hover { background: var(--version-inactive-hover-bg); }
-.themed-error { background: var(--error-bg); border-color: var(--error-border); color: var(--error-text); }
-.themed-welcome-text { color: var(--welcome-text); }
-.themed-welcome-sub { color: var(--welcome-sub); }
-.themed-burger { color: var(--burger-text); }
-.themed-burger:hover { color: var(--burger-hover-text); background: var(--burger-hover-bg); }
-.themed-btn { background: var(--btn-bg); color: var(--btn-text); }
-.themed-btn:hover { background: var(--btn-hover-bg); }
-.themed-input { background: var(--input-bg); border-color: var(--input-border); color: var(--input-text); }
-.themed-input::placeholder { color: var(--input-placeholder); }
-.themed-input:focus-within { border-color: var(--input-focus-border); }
-.themed-send-btn { background: var(--send-btn-bg); color: var(--send-btn-text); }
-.themed-send-btn:hover { background: var(--send-btn-hover); }
-.themed-menu { background: var(--menu-bg); border-color: var(--menu-border); color: var(--menu-text); }
-.themed-sidebar-panel { background: var(--sidebar-bg); border-color: var(--sidebar-border); }
-.themed-sidebar-text { color: var(--sidebar-text); }
-.themed-sidebar-secondary { color: var(--sidebar-text-secondary); }
-.themed-sidebar-muted { color: var(--sidebar-text-muted); }
-.themed-sidebar-hover:hover { background: var(--sidebar-hover-bg); }
-.themed-sidebar-active { background: var(--sidebar-active-bg); color: var(--sidebar-text); }
-.themed-sidebar-input { background: var(--sidebar-input-bg); color: var(--sidebar-input-text); border-color: var(--sidebar-input-border); }
-.themed-new-chat { background: var(--new-chat-bg); color: var(--new-chat-text); }
-.themed-new-chat:hover { background: var(--new-chat-hover); }
-.themed-online { background: var(--online-bg); border-color: var(--online-border); color: var(--online-text); }
-.themed-offline { background: var(--offline-bg); border-color: var(--offline-border); color: var(--offline-text); }
-.themed-chip { background: var(--chip-bg); border-color: var(--chip-border); color: var(--chip-text); }
-.themed-chip-secondary { color: var(--chip-secondary-text); }
-.themed-chip-icon { background: var(--chip-icon-bg); }
-.themed-modal { background: var(--modal-bg); border-color: var(--modal-border); color: var(--modal-text); }
-.themed-modal-muted { color: var(--modal-muted); }
-.themed-modal-input { background: var(--modal-input-bg); border-color: var(--modal-input-border); color: var(--modal-input-text); }
-.themed-modal-input::placeholder { color: var(--modal-input-placeholder); }
-.themed-hold-btn { background: var(--hold-btn-bg); border-color: var(--hold-btn-border); }
-.themed-aurora-1 {
-  background: radial-gradient(circle closest-side, var(--aurora-1) 0%, var(--aurora-1) 35%, transparent 100%);
-}
-.themed-aurora-2 {
-  background: radial-gradient(circle closest-side, var(--aurora-2) 0%, var(--aurora-2) 35%, transparent 100%);
-}
-.themed-aurora-3 {
-  background: radial-gradient(circle closest-side, var(--aurora-3) 0%, var(--aurora-3) 35%, transparent 100%);
-}
-.themed-block-screen { background: var(--block-screen-bg); }
-.themed-theme-sidebar { background: var(--theme-sidebar-bg); border-color: var(--theme-sidebar-border); }
-.themed-theme-card { background: var(--theme-card-bg); border-color: var(--theme-card-border); }
-.themed-theme-card-active { border-color: var(--theme-card-active-border); }
-.themed-theme-card-text { color: var(--theme-card-text); }
-.themed-theme-card-muted { color: var(--theme-card-muted); }
-.themed-wife-badge { background: var(--wife-accent-bg); border-color: var(--wife-accent-border); color: var(--wife-accent-text); }
-.themed-wife-modal-icon { background: var(--wife-accent-bg); border-color: var(--wife-accent-border); }
-.themed-wife-modal-icon * { color: var(--wife-accent-text); }
-.themed-wife-input:focus { border-color: var(--wife-accent); }
-.themed-wife-btn { background: var(--wife-accent); color: #ffffff; }
-.themed-wife-btn:hover { background: var(--accent); filter: brightness(0.92); }
-.themed-rate-warn { color: var(--rate-warn); }
-.themed-link { color: var(--link-text); }
-.themed-quote { border-color: var(--quote-border); color: var(--quote-text); }
-.themed-code-block { background: var(--code-bg); color: var(--code-text); border-color: var(--code-border); }
-.themed-code-inline { background: var(--code-bg); color: var(--code-text); }
-.themed-grid-bg { background-image: linear-gradient(var(--grid-color) 1px, transparent 1px), linear-gradient(90deg, var(--grid-color) 1px, transparent 1px); background-size: 40px 40px; }
