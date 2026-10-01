@@ -51,8 +51,8 @@ export const VRM_CONFIG = {
 export const VOICE_CONFIG = {
   // Voice priority queue: highest preference to lowest preference fallback
   priorityQueue: ['Bangla', 'Bengali', 'Veena', 'Google বাংলা', 'India'],
-  pitch: 1.05,
-  rate: 1.15,
+  pitch: 1.15,
+  rate: 1.05,
   maleKeywords: [
     'male', 'david', 'mark', 'george', 'james', 'stefan', 'alex', 'fred',
     'daniel', 'oliver', 'rishi', 'guy', 'thomas', 'luca', 'jorge', 'diego',
